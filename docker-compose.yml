@@ -1,0 +1,27 @@
+version: "3.8"
+
+# Build with:  docker compose build
+# Run with:    docker compose run --rm saga
+#
+# BuildKit is required for --mount=type=cache in the Dockerfile.
+# Modern Docker (23+) enables it by default. If you get a syntax error,
+# prefix the build command with: DOCKER_BUILDKIT=1
+
+services:
+  saga:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: saga:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      # SAM checkpoint (~2.4 GB) — read-only, never baked into the image
+      - ./sam_vit_h_4b8939.pth:/workspace/third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth:ro
+      # Dataset — bind-mount instead of unzipping inside the image
+      - ./data/360_extra_scenes:/workspace/data/360_v2:ro
+      # Outputs — writable, persisted on the host between runs
+      - ./outputs:/workspace/outputs
+    stdin_open: true
+    tty: true
