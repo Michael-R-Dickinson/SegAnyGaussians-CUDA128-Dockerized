@@ -1,0 +1,25 @@
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Compiled extensions
+*.so
+*.o
+*.a
+
+# Model weights (large binaries)
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Jupyter
+.ipynb_checkpoints/
