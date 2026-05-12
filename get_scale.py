@@ -96,17 +96,8 @@ if __name__ == '__main__':
     assert os.path.join(dataset.source_path, 'sam_masks') and "Please run extract_segment_everything_masks first."
 
     from tqdm import tqdm
-    images_masks = {}
-    for i, image_path in tqdm(enumerate(sorted(os.listdir(os.path.join(dataset.source_path, 'images'))))):
-        # print(image_path)
-        image = cv2.imread(os.path.join(os.path.join(dataset.source_path, 'images'), image_path))
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        masks = torch.load(os.path.join(os.path.join(dataset.source_path, 'sam_masks'), image_path.replace('jpg', 'pt').replace('JPG', 'pt').replace('png', 'pt')))
-        # N_mask, C
 
-        images_masks[image_path.split('.')[0]] = masks.cpu().float()
-
-
+    SAM_MASKS_DIR = os.path.join(dataset.source_path, 'sam_masks')
     OUTPUT_DIR = os.path.join(args.image_root, 'mask_scales')
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -120,8 +111,8 @@ if __name__ == '__main__':
 
         depth = rendered_pkg['depth']
 
-        # plt.imshow(depth.detach().cpu().squeeze().numpy())
-        corresponding_masks = images_masks[view.image_name]
+        # load mask on demand to avoid pre-loading all 173 masks into RAM
+        corresponding_masks = torch.load(os.path.join(SAM_MASKS_DIR, view.image_name + '.pt')).cpu().float()
 
         # generate_grid_index(depth.squeeze())[50, 1]
 
