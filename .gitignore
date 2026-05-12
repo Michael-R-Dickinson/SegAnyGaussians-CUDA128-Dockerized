@@ -25,3 +25,4 @@ build/
 .ipynb_checkpoints/
 
 outputs/
+.venv
