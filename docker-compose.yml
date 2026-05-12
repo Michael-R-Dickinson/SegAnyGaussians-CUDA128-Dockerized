@@ -16,6 +16,7 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - DISPLAY=${DISPLAY:-:0}
     volumes:
       # SAM checkpoint (~2.4 GB) — read-only, never baked into the image
       - ./sam_vit_h_4b8939.pth:/workspace/third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth:ro
@@ -28,6 +29,12 @@ services:
       # This is essential on Blackwell (RTX 5090/sm_120) since CUDA 11.6 extensions
       # must JIT-compile PTX for sm_120 on first run (can take 15+ minutes).
       - cuda_jit_cache:/root/.nv
+      # X11 socket for GUI apps (saga_gui.py via dearpygui)
+      # Requires: xhost +local: on the host before running
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    devices:
+      # WSL2 D3D12 interface — enables hardware-accelerated OpenGL via Mesa in the container
+      - /dev/dxg:/dev/dxg
     stdin_open: true
     tty: true
 

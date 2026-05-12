@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y \
     build-essential cmake ninja-build \
     libgl1-mesa-glx libglib2.0-0 \
     libsm6 libxext6 libxrender-dev \
+    libxi6 libxcursor1 libxinerama1 libxrandr2 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Miniconda ─────────────────────────────────────────────────────────────────
@@ -85,9 +86,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install /workspace/third_party/segment-anything
 # open-clip-torch >=2.20 pulls in puccinialin which requires Python >=3.9.
 # Pin to 2.0.2 (2022 release) which has no such dependency.
-# dearpygui is only needed for the interactive GUI, not the processing pipeline.
+# dearpygui 1.9.x is the last series with Python 3.7 wheels; it bundles GLFW
+# and uses OpenGL which is provided via Mesa D3D12 on WSL2 (see docker-compose.yml).
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install opencv-python "open-clip-torch==2.0.2" "joblib==1.1.0"
+    pip install opencv-python "open-clip-torch==2.0.2" "joblib==1.1.0" "dearpygui==1.9.0"
 
 # ── Fix missing libtiff.so.5 (conda ships libtiff.so.6) ──────────────────────
 RUN ln -sf /opt/conda/envs/gaussian_splatting/lib/libtiff.so.6 \
