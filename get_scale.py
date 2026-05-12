@@ -120,9 +120,21 @@ if __name__ == '__main__':
 
         depth = depth.cpu().squeeze()
 
+        # Downsample depth to mask resolution instead of upsampling masks to full camera
+        # resolution. At 5025×3312, upsampling 69 masks to full res allocates ~4.6 GB
+        # float32 per iteration and OOM-kills around camera 150. Scale computation only
+        # needs relative 3D positions within each mask, so resolution parity is sufficient.
+        mask_h, mask_w = corresponding_masks.shape[1], corresponding_masks.shape[2]
+        depth = torch.nn.functional.interpolate(
+            depth.unsqueeze(0).unsqueeze(0),
+            size=(mask_h, mask_w),
+            mode='bilinear',
+            align_corners=False,
+        ).squeeze()
+
         grid_index = generate_grid_index(depth)
 
-        points_in_3D = torch.zeros(depth.shape[0], depth.shape[1], 3).cpu()
+        points_in_3D = torch.zeros(mask_h, mask_w, 3)
         points_in_3D[:,:,-1] = depth
 
         # caluculate cx cy fx fy with FoVx FoVy
@@ -135,10 +147,10 @@ if __name__ == '__main__':
         points_in_3D[:,:,0] = (grid_index[:,:,0] - cx) * depth / fx
         points_in_3D[:,:,1] = (grid_index[:,:,1] - cy) * depth / fy
 
-        upsampled_mask = torch.nn.functional.interpolate(corresponding_masks.unsqueeze(1).float(), mode = 'bilinear', size = (depth.shape[0], depth.shape[1]), align_corners = False)
+        upsampled_mask = corresponding_masks.unsqueeze(1).float()
 
         eroded_masks = torch.conv2d(
-            upsampled_mask.float(),
+            upsampled_mask,
             torch.full((3, 3), 1.0).view(1, 1, 3, 3),
             padding=1,
         )
