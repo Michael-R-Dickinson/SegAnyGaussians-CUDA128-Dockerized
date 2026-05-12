@@ -113,8 +113,8 @@ if __name__ == '__main__':
 
         depth = rendered_pkg['depth']
 
-        # load mask on demand to avoid pre-loading all 173 masks into RAM
-        corresponding_masks = torch.load(os.path.join(SAM_MASKS_DIR, view.image_name + '.pt')).cpu().float()
+        # load mask on demand; keep original dtype (bool/uint8) to avoid 4-8x RAM expansion
+        corresponding_masks = torch.load(os.path.join(SAM_MASKS_DIR, view.image_name + '.pt')).cpu()
 
         # generate_grid_index(depth.squeeze())[50, 1]
 
@@ -135,7 +135,7 @@ if __name__ == '__main__':
         points_in_3D[:,:,0] = (grid_index[:,:,0] - cx) * depth / fx
         points_in_3D[:,:,1] = (grid_index[:,:,1] - cy) * depth / fy
 
-        upsampled_mask = torch.nn.functional.interpolate(corresponding_masks.unsqueeze(1), mode = 'bilinear', size = (depth.shape[0], depth.shape[1]), align_corners = False)
+        upsampled_mask = torch.nn.functional.interpolate(corresponding_masks.unsqueeze(1).float(), mode = 'bilinear', size = (depth.shape[0], depth.shape[1]), align_corners = False)
 
         eroded_masks = torch.conv2d(
             upsampled_mask.float(),
