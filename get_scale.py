@@ -78,6 +78,8 @@ if __name__ == '__main__':
     parser.add_argument("--image_root", default='/datasets/nerf_data/360_v2/garden/', type=str)
 
     args = get_combined_args(parser)
+    # Force CPU data device to prevent 30GB+ VRAM overflow into system RAM
+    args.data_device = 'cpu'
 
     dataset = model.extract(args)
     dataset.need_features = False
