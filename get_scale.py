@@ -90,9 +90,10 @@ if __name__ == '__main__':
 
     feature_gaussians = None
     scene_gaussians = GaussianModel(dataset.sh_degree)
+    print("Loaded Gaussian Model")
 
     scene = Scene(dataset, scene_gaussians, feature_gaussians, load_iteration=-1, feature_load_iteration=-1, shuffle=False, mode='eval', target='scene')
-
+    print("Scene loaded")
 
     assert os.path.exists(os.path.join(dataset.source_path, 'images')) and "Please specify a valid image root."
     assert os.path.join(dataset.source_path, 'sam_masks') and "Please run extract_segment_everything_masks first."
