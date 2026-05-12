@@ -1,5 +1,5 @@
 import torch
-
+import gc
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -152,3 +152,8 @@ if __name__ == '__main__':
             scale[mask_id] = (point_in_3D_in_mask.std(dim=0) * 2).norm()
 
         torch.save(scale, os.path.join(OUTPUT_DIR, view.image_name + '.pt'))
+
+        del rendered_pkg, depth, grid_index, points_in_3D, corresponding_masks
+        del upsampled_mask, eroded_masks, scale
+        torch.cuda.empty_cache()
+        gc.collect()
