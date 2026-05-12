@@ -20,8 +20,16 @@ services:
       # SAM checkpoint (~2.4 GB) — read-only, never baked into the image
       - ./sam_vit_h_4b8939.pth:/workspace/third_party/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth:ro
       # Dataset — bind-mount instead of unzipping inside the image
-      - ./data/360_extra_scenes:/workspace/data/360_v2:ro
+      # Note: not read-only because the COLMAP loader writes points3D.ply on first run
+      - ./data/360_extra_scenes:/workspace/data/360_v2
       # Outputs — writable, persisted on the host between runs
       - ./outputs:/workspace/outputs
+      # CUDA PTX JIT cache — avoids recompiling sm_120 kernels on every container start
+      # This is essential on Blackwell (RTX 5090/sm_120) since CUDA 11.6 extensions
+      # must JIT-compile PTX for sm_120 on first run (can take 15+ minutes).
+      - cuda_jit_cache:/root/.nv
     stdin_open: true
     tty: true
+
+volumes:
+  cuda_jit_cache:

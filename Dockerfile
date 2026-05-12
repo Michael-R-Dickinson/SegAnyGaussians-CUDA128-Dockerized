@@ -2,12 +2,20 @@
 FROM nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-# Target RTX 3070 Mobile (sm_86) plus other common Ampere/Turing/Volta archs
+# Compile CUDA extensions for Volta/Turing/Ampere natively.
+# The "+PTX" on 8.6 embeds PTX bytecode so the NVIDIA driver can JIT-compile
+# for newer architectures (e.g. RTX 5090 / sm_120 / Blackwell) at first run.
+# First-run JIT on sm_120 can take 20-30 min; cache it with the cuda_jit_cache
+# Docker volume (see docker-compose.yml) so subsequent runs are instant.
 ENV TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6+PTX"
 ENV CUDA_HOME=/usr/local/cuda
 ENV FORCE_CUDA=1
 ENV PATH="/usr/local/cuda/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+# Persist compiled PTX kernels across container restarts via the cuda_jit_cache volume
+ENV CUDA_CACHE_PATH=/root/.nv/ComputeCache
+# Unbuffered Python output so log files update immediately
+ENV PYTHONUNBUFFERED=1
 
 # ── System dependencies ───────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
