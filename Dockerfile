@@ -14,6 +14,10 @@ ENV PATH="/usr/local/cuda/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 # Persist compiled PTX kernels across container restarts via the cuda_jit_cache volume
 ENV CUDA_CACHE_PATH=/root/.nv/ComputeCache
+# All sm_120 (Blackwell) JIT-compiled cubins total ~1 GB across the four CUDA extensions.
+# The default limit is 256 MB, which evicts ~75% of entries and forces PTX recompilation
+# on every run. Set to 2 GB so the full kernel set fits in the index.
+ENV CUDA_CACHE_MAXSIZE=2147483648
 # Unbuffered Python output so log files update immediately
 ENV PYTHONUNBUFFERED=1
 
