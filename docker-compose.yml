@@ -17,12 +17,18 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_CACHE_PATH=/root/.nv/ComputeCache
     volumes:
       # Training data and outputs stay on the host; model weights are read-only
       - ./data:/workspace/data
       - ./output:/workspace/output
       - ./sam_vit_h_4b8939.pth:/workspace/sam_vit_h_4b8939.pth:ro
+      # Cache JIT-compiled sm_120 cubins across container runs
+      - cuda_jit_cache:/root/.nv
     # Required for PyTorch DataLoader shared memory
     ipc: host
     stdin_open: true
     tty: true
+
+volumes:
+  cuda_jit_cache:

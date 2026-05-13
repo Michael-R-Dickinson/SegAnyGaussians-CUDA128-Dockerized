@@ -29,10 +29,10 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
     && update-alternatives --install /usr/bin/python  python  /usr/bin/python3.11 1 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
 
-# PyTorch 2.6 + CUDA 12.8 (separate layer — expensive, cache it)
+# PyTorch 2.7 + CUDA 12.8 (separate layer — expensive, cache it)
 RUN pip install --no-cache-dir \
-    torch==2.6.0 \
-    torchvision==0.21.0 \
+    torch==2.7.0 \
+    torchvision==0.22.0 \
     --index-url https://download.pytorch.org/whl/cu128
 
 # Python dependencies
@@ -48,20 +48,22 @@ RUN pip install --no-cache-dir \
     scipy \
     dearpygui
 
-# Copy submodule + SAM source first so CUDA extension builds are cached
-# independently of changes to the main Python source
+# Install segment-anything from upstream (third_party/ is excluded from build context)
+RUN pip install --no-cache-dir \
+    "git+https://github.com/facebookresearch/segment-anything.git"
+
+# Copy submodule CUDA extensions and build them — separate layer so changes to
+# the main Python source don't invalidate this expensive compile step
 COPY submodules/ ./submodules/
-COPY third_party/ ./third_party/
 
 RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" \
     FORCE_CUDA=1 \
     MAX_JOBS=${MAX_JOBS} \
-    pip install --no-cache-dir \
+    pip install --no-build-isolation --no-cache-dir \
         submodules/diff-gaussian-rasterization \
         submodules/diff-gaussian-rasterization_contrastive_f \
         submodules/diff-gaussian-rasterization-depth \
-        submodules/simple-knn \
-        third_party/segment-anything
+        submodules/simple-knn
 
 # Copy the rest of the project
 COPY . .

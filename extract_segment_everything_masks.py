@@ -38,7 +38,7 @@ if __name__ == '__main__':
     )
 
     downsample_manually = False
-    if args.downsample == "1" or args.downsample_type == 'mask':
+    if args.downsample == 1 or args.downsample_type == 'mask':
         IMAGE_DIR = os.path.join(args.image_root, 'images')
     else:
         IMAGE_DIR = os.path.join(args.image_root, 'images_'+str(args.downsample))
@@ -51,10 +51,14 @@ if __name__ == '__main__':
     OUTPUT_DIR = os.path.join(args.image_root, 'sam_masks')
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG'}
+    all_paths = [p for p in sorted(os.listdir(IMAGE_DIR))
+                 if os.path.splitext(p)[1] in IMAGE_EXTS]
+
     print("Extracting SAM segment everything masks...")
-    
-    for path in tqdm(sorted(os.listdir(IMAGE_DIR))):
-        name = path.split('.')[0]
+
+    for path in tqdm(all_paths):
+        name = os.path.splitext(path)[0]
         img = cv2.imread(os.path.join(IMAGE_DIR, path))
         if downsample_manually:
             img = cv2.resize(img,dsize=(img.shape[1] // args.downsample, img.shape[0] // args.downsample),fx=1,fy=1,interpolation=cv2.INTER_LINEAR)

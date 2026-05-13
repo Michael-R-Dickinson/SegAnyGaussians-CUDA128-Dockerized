@@ -1,3 +1,4 @@
+import os
 from tqdm import tqdm
 import torch, torchvision
 from .clip_utils import OpenCLIPNetwork
@@ -166,9 +167,6 @@ def get_features_from_image_and_masks(clip_model: OpenCLIPNetwork, image: np.arr
     for seg_idx in range(len(bboxes)):
         with torch.no_grad():
             tmp_image = masked_images[seg_idx][bboxes[seg_idx][1]:bboxes[seg_idx][3], bboxes[seg_idx][0]:bboxes[seg_idx][2], :]
-            import matplotlib.pyplot as plt
-            plt.imshow(tmp_image.cpu().numpy() / 255.0)
-            # plt.imsave("tmp.jpg", tmp_image.cpu().numpy() / 255.0)
             tmp_image = tmp_image.cuda()
             masked_image_clip_features = clip_model.encode_image(tmp_image[None,...].permute([0,3,1,2]) / 255.0)
             cropped_seg_image_features1x.append(masked_image_clip_features.cpu())
