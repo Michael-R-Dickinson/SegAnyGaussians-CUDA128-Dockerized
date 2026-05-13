@@ -12,7 +12,7 @@ dependencies:
   - torchaudio=0.12.1
   - torchvision=0.13.1
   - tqdm
-  - hdbscan
+  - hdbscan>=0.8.33
   - matplotlib
   - pip:
     - submodules/diff-gaussian-rasterization
@@ -24,3 +24,4 @@ dependencies:
     - opencv-python
     - open-clip-torch
     - joblib==1.1.0
+    - safetensors<0.4.0

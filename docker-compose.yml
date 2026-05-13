@@ -1,0 +1,28 @@
+services:
+  saga:
+    build:
+      context: .
+      args:
+        # Narrow this to your GPU for faster builds, e.g. "12.0+PTX" for RTX 50xx
+        TORCH_CUDA_ARCH_LIST: "8.6 8.9 9.0 12.0+PTX"
+        MAX_JOBS: "4"
+    image: segany-gaussians:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      # Training data and outputs stay on the host; model weights are read-only
+      - ./data:/workspace/data
+      - ./output:/workspace/output
+      - ./sam_vit_h_4b8939.pth:/workspace/sam_vit_h_4b8939.pth:ro
+    # Required for PyTorch DataLoader shared memory
+    ipc: host
+    stdin_open: true
+    tty: true

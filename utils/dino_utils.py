@@ -353,7 +353,7 @@ class DINO:
         self.model.eval()
 
     def load_checkpoint(self, ckpt_file, checkpoint_key="model"):
-        state_dict = torch.load(ckpt_file, map_location="cpu")
+        state_dict = torch.load(ckpt_file, map_location="cpu", weights_only=False)
         if checkpoint_key is not None and checkpoint_key in state_dict:
             print(f"Take key {checkpoint_key} in provided checkpoint dict")
             state_dict = state_dict[checkpoint_key]

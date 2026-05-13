@@ -10,8 +10,8 @@
 #
 
 import torch
-import pytorch3d.ops
 import numpy as np
+from scipy.spatial import KDTree
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
 import os
@@ -238,7 +238,7 @@ class FeatureGaussianModel:
             return
         fds = [10, 10, 10]
 
-        self.idx_mapper = torch.load(path)
+        self.idx_mapper = torch.load(path, weights_only=False)
         self.multi_res_features = nn.ParameterList()
         for i in range(3):
             uni = torch.unique(self.idx_mapper[:,i])
@@ -323,11 +323,9 @@ class FeatureGaussianModel:
     def smooth_point_features(self, K = 16, smoothed_dim = 24):
         if self.feature_smooth_map is None or self.feature_smooth_map["K"] != K:
             xyz = self.get_xyz
-            nearest_k_idx = pytorch3d.ops.knn_points(
-                xyz.unsqueeze(0),
-                xyz.unsqueeze(0),
-                K=K,
-            ).idx.squeeze()
+            xyz_np = xyz.detach().cpu().numpy()
+            _, nearest_k_idx_np = KDTree(xyz_np).query(xyz_np, k=K)
+            nearest_k_idx = torch.from_numpy(nearest_k_idx_np).long().to(xyz.device)
             self.feature_smooth_map = {"K":K, "m":nearest_k_idx}
 
         cur_features = self._point_features
@@ -344,11 +342,9 @@ class FeatureGaussianModel:
         with torch.no_grad():
             if self.feature_smooth_map is None or self.feature_smooth_map["K"] != K:
                 xyz = self.get_xyz
-                nearest_k_idx = pytorch3d.ops.knn_points(
-                    xyz.unsqueeze(0),
-                    xyz.unsqueeze(0),
-                    K=K,
-                ).idx.squeeze()
+                xyz_np = xyz.detach().cpu().numpy()
+                _, nearest_k_idx_np = KDTree(xyz_np).query(xyz_np, k=K)
+                nearest_k_idx = torch.from_numpy(nearest_k_idx_np).long().to(xyz.device)
                 self.feature_smooth_map = {"K":K, "m":nearest_k_idx}
 
         normed_features = torch.nn.functional.normalize(self._point_features, dim = -1, p = 2)
@@ -377,11 +373,10 @@ class FeatureGaussianModel:
 
                     pm = torch.rand(xyz.shape[0]) < r
 
-                    nearest_k_idx = pytorch3d.ops.knn_points(
-                        xyz.unsqueeze(0),
-                        xyz[pm].unsqueeze(0),
-                        K=k,
-                    ).idx.squeeze()
+                    ref_np = xyz[pm].detach().cpu().numpy()
+                    query_np = xyz.detach().cpu().numpy()
+                    _, nearest_k_idx_np = KDTree(ref_np).query(query_np, k=k)
+                    nearest_k_idx = torch.from_numpy(nearest_k_idx_np).long().to(xyz.device)
 
                     if len(self.multi_res_feature_smooth_map) <= i:
                         self.multi_res_feature_smooth_map.append({"rate":r, "K":k, "point_mask": pm, "m":nearest_k_idx})

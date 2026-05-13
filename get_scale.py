@@ -101,7 +101,7 @@ if __name__ == '__main__':
         # print(image_path)
         image = cv2.imread(os.path.join(os.path.join(dataset.source_path, 'images'), image_path))
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        masks = torch.load(os.path.join(os.path.join(dataset.source_path, 'sam_masks'), image_path.replace('jpg', 'pt').replace('JPG', 'pt').replace('png', 'pt')))
+        masks = torch.load(os.path.join(os.path.join(dataset.source_path, 'sam_masks'), image_path.replace('jpg', 'pt').replace('JPG', 'pt').replace('png', 'pt')), weights_only=False)
         # N_mask, C
 
         images_masks[image_path.split('.')[0]] = masks.cpu().float()

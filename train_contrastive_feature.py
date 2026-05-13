@@ -26,9 +26,6 @@ import numpy as np
 
 import torch
 from torch import nn
-import pytorch3d.ops
-
-
 import time
 
 try:

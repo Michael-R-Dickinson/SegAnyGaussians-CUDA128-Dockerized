@@ -1,0 +1,9 @@
+data/
+output/
+*.pth
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+submodules/**/build/
+.git/
+.devcontainer/
