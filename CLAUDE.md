@@ -48,9 +48,10 @@ python extract_segment_everything_masks.py \
     --sam_checkpoint_path /workspace/sam_vit_h_4b8939.pth \
     --downsample 8
 
-# 3. Get CLIP features (reads from images/, masks auto-resampled to match)
+# 3. Get CLIP features (--downsample must match SAM step to avoid OOM)
 python get_clip_features.py \
-    --image_root data/360_extra_scenes/flowers
+    --image_root data/360_extra_scenes/flowers \
+    --downsample 8
 
 # 4. Get mask scales (requires trained scene model)
 python get_scale.py \
@@ -67,9 +68,24 @@ python train_contrastive_feature.py \
 ## Known fixes applied (Update-cuda branch)
 
 - `Dockerfile`: PyTorch 2.6→2.7, `--no-build-isolation`, segment-anything from git
-- `docker-compose.yml`: `cuda_jit_cache` volume, `CUDA_CACHE_PATH` env var
+- `docker-compose.yml`: `cuda_jit_cache` volume, `CUDA_CACHE_PATH` env var, `.:/workspace` source bind-mount
 - `submodules/*/rasterize_points.cu`, `simple-knn/spatial.cu`: `.data<T>()` → `.data_ptr<T>()`
+- `submodules/simple-knn/simple_knn.cu`: `#include <float.h>` (CUDA 12 no longer auto-includes it)
 - `extract_segment_everything_masks.py`: filter `Zone.Identifier` files, fix `int == "1"` bug
-- `get_clip_features.py`: filter `Zone.Identifier` files
+- `get_clip_features.py`: `--downsample` flag (without it, full-res masked_images tensor OOMs); filter `Zone.Identifier` files
 - `clip_utils/__init__.py`: remove headless `plt.imshow()`, add missing `import os`
 - `clip_utils/clip_utils.py`: hard-coded local CLIP path → `"laion2b_s34b_b88k"` registry ID
+- `get_scale.py`: `torch.meshgrid(..., indexing='ij')`
+- `utils/loss_utils.py`: removed deprecated `torch.autograd.Variable`
+
+## Pipeline status (2026-05-13)
+
+All five steps verified end-to-end on RTX 5080 (sm_120):
+
+| Step | Command | Status | Speed |
+|------|---------|--------|-------|
+| Scene training | `train_scene.py` 500 iters, images_8 | ✅ | ~4 sec @ 130 it/s |
+| SAM masks | `extract_segment_everything_masks.py --downsample 8` | ✅ | 173 images |
+| Scale | `get_scale.py` | ✅ | 173 images |
+| CLIP features | `get_clip_features.py --downsample 8` | ✅ | 53 sec, 173 images |
+| Contrastive features | `train_contrastive_feature.py` 200 iters | ✅ | ~12 sec @ 20 it/s |
