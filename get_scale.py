@@ -1,5 +1,5 @@
 import torch
-
+import gc
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -78,6 +78,8 @@ if __name__ == '__main__':
     parser.add_argument("--image_root", default='/datasets/nerf_data/360_v2/garden/', type=str)
 
     args = get_combined_args(parser)
+    # Force CPU data device to prevent 30GB+ VRAM overflow into system RAM
+    args.data_device = 'cpu'
 
     dataset = model.extract(args)
     dataset.need_features = False
@@ -88,25 +90,17 @@ if __name__ == '__main__':
 
     feature_gaussians = None
     scene_gaussians = GaussianModel(dataset.sh_degree)
+    print("Loaded Gaussian Model")
 
     scene = Scene(dataset, scene_gaussians, feature_gaussians, load_iteration=-1, feature_load_iteration=-1, shuffle=False, mode='eval', target='scene')
-
+    print("Scene loaded")
 
     assert os.path.exists(os.path.join(dataset.source_path, 'images')) and "Please specify a valid image root."
     assert os.path.join(dataset.source_path, 'sam_masks') and "Please run extract_segment_everything_masks first."
 
     from tqdm import tqdm
-    images_masks = {}
-    for i, image_path in tqdm(enumerate(sorted(os.listdir(os.path.join(dataset.source_path, 'images'))))):
-        # print(image_path)
-        image = cv2.imread(os.path.join(os.path.join(dataset.source_path, 'images'), image_path))
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        masks = torch.load(os.path.join(os.path.join(dataset.source_path, 'sam_masks'), image_path.replace('jpg', 'pt').replace('JPG', 'pt').replace('png', 'pt')), weights_only=False)
-        # N_mask, C
 
-        images_masks[image_path.split('.')[0]] = masks.cpu().float()
-
-
+    SAM_MASKS_DIR = os.path.join(dataset.source_path, 'sam_masks')
     OUTPUT_DIR = os.path.join(args.image_root, 'mask_scales')
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -120,16 +114,28 @@ if __name__ == '__main__':
 
         depth = rendered_pkg['depth']
 
-        # plt.imshow(depth.detach().cpu().squeeze().numpy())
-        corresponding_masks = images_masks[view.image_name]
+        # load mask on demand; keep original dtype (bool/uint8) to avoid 4-8x RAM expansion
+        corresponding_masks = torch.load(os.path.join(SAM_MASKS_DIR, view.image_name + '.pt')).cpu()
 
         # generate_grid_index(depth.squeeze())[50, 1]
 
         depth = depth.cpu().squeeze()
 
+        # Downsample depth to mask resolution instead of upsampling masks to full camera
+        # resolution. At 5025×3312, upsampling 69 masks to full res allocates ~4.6 GB
+        # float32 per iteration and OOM-kills around camera 150. Scale computation only
+        # needs relative 3D positions within each mask, so resolution parity is sufficient.
+        mask_h, mask_w = corresponding_masks.shape[1], corresponding_masks.shape[2]
+        depth = torch.nn.functional.interpolate(
+            depth.unsqueeze(0).unsqueeze(0),
+            size=(mask_h, mask_w),
+            mode='bilinear',
+            align_corners=False,
+        ).squeeze()
+
         grid_index = generate_grid_index(depth)
 
-        points_in_3D = torch.zeros(depth.shape[0], depth.shape[1], 3).cpu()
+        points_in_3D = torch.zeros(mask_h, mask_w, 3)
         points_in_3D[:,:,-1] = depth
 
         # caluculate cx cy fx fy with FoVx FoVy
@@ -142,10 +148,10 @@ if __name__ == '__main__':
         points_in_3D[:,:,0] = (grid_index[:,:,0] - cx) * depth / fx
         points_in_3D[:,:,1] = (grid_index[:,:,1] - cy) * depth / fy
 
-        upsampled_mask = torch.nn.functional.interpolate(corresponding_masks.unsqueeze(1), mode = 'bilinear', size = (depth.shape[0], depth.shape[1]), align_corners = False)
+        upsampled_mask = corresponding_masks.unsqueeze(1).float()
 
         eroded_masks = torch.conv2d(
-            upsampled_mask.float(),
+            upsampled_mask,
             torch.full((3, 3), 1.0).view(1, 1, 3, 3),
             padding=1,
         )
@@ -159,3 +165,8 @@ if __name__ == '__main__':
             scale[mask_id] = (point_in_3D_in_mask.std(dim=0) * 2).norm()
 
         torch.save(scale, os.path.join(OUTPUT_DIR, view.image_name + '.pt'))
+
+        del rendered_pkg, depth, grid_index, points_in_3D, corresponding_masks
+        del upsampled_mask, eroded_masks, scale
+        torch.cuda.empty_cache()
+        gc.collect()

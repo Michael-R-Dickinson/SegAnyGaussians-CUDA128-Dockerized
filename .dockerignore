@@ -7,3 +7,23 @@ output/
 submodules/**/build/
 .git/
 .devcontainer/
+# Large assets — bind-mounted at runtime; never bake into the image
+sam_vit_h_4b8939.pth
+data/
+
+# Populated by git clone inside the build; host copies would overwrite image versions
+third_party/
+
+# Python byte-code
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Git internals
+.git/
+.gitmodules
+
+# Build artifacts
+*.egg-info/
+dist/
+build/

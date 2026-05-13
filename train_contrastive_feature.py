@@ -313,7 +313,9 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
 
     
     scene.save_feature(iteration, target = 'contrastive_feature', smooth_weights = torch.softmax(smooth_weights, dim = -1) if smooth_weights is not None else None, smooth_type = 'traditional', smooth_K = opt.smooth_K)
+    print("Saving Scale Gate")
     torch.save(scale_gate.state_dict(), os.path.join(scene.model_path, "point_cloud/iteration_{}/".format(iteration) + "scale_gate.pt"))
+    print("Saved Iteration {} to {}".format(iteration, os.path.join(scene.model_path, "point_cloud/iteration_{}/".format(iteration) + "scale_gate.pt")))
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
