@@ -13,6 +13,7 @@ if __name__ == '__main__':
     parser = ArgumentParser(description="Get CLIP features with SAM masks")
     
     parser.add_argument("--image_root", default='./data/360_v2/garden/', type=str)
+    parser.add_argument("--downsample", default=1, type=int)
 
     args = parser.parse_args()
 
@@ -23,13 +24,14 @@ if __name__ == '__main__':
     OUTPUT_DIR = os.path.join(args.image_root, 'clip_features')
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    image_dir = 'images' if args.downsample == 1 else f'images_{args.downsample}'
     IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG'}
-    image_paths = [p for p in sorted(os.listdir(os.path.join(args.image_root, 'images')))
+    image_paths = [p for p in sorted(os.listdir(os.path.join(args.image_root, image_dir)))
                    if os.path.splitext(p)[1] in IMAGE_EXTS]
 
     with torch.no_grad():
         for i, image_path in tqdm(enumerate(image_paths)):
-            image = cv2.imread(os.path.join(os.path.join(args.image_root, 'images'), image_path))
+            image = cv2.imread(os.path.join(os.path.join(args.image_root, image_dir), image_path))
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             masks = torch.load(os.path.join(os.path.join(args.image_root, 'sam_masks'), image_path.replace('jpg', 'pt').replace('JPG', 'pt').replace('png', 'pt')), weights_only=False)
             # N_mask, C

@@ -19,6 +19,8 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_CACHE_PATH=/root/.nv/ComputeCache
     volumes:
+      # Source code live-mount so host edits take effect without rebuilds
+      - .:/workspace
       # Training data and outputs stay on the host; model weights are read-only
       - ./data:/workspace/data
       - ./output:/workspace/output
