@@ -10,6 +10,9 @@
 #
 
 import os
+# Eliminates cudaMalloc implicit-device-sync hangs on large-Gaussian scenes.
+# Must be set before any CUDA context is initialized.
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 import torch
 from random import randint
 from gaussian_renderer import render_contrastive_feature
@@ -140,7 +143,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         
         with torch.no_grad():
-            # N_mask, H, W
+            # N_mask, H, W (masks are stored on CUDA from extraction step)
             sam_masks = viewpoint_cam.original_masks.cuda().float()
             viewpoint_cam.feature_height, viewpoint_cam.feature_width = viewpoint_cam.image_height, viewpoint_cam.image_width
 
@@ -160,7 +163,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             tmp[-1] = len(mask_scales) - 1
             tmp[0] = -1 # attach a bigger scale
             sampled_scale_index = tmp.long()
-            
+
 
             sampled_scales = mask_scales[sampled_scale_index]
 
@@ -186,7 +189,7 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             pixel_to_pixel_mask_size[pixel_to_pixel_mask_size == 0] = 1e10
             per_pixel_weight = torch.clamp(ptp_max_size / pixel_to_pixel_mask_size, 1.0, None)
             per_pixel_weight = (per_pixel_weight - per_pixel_weight.min()) / (per_pixel_weight.max() - per_pixel_weight.min()) * 9. + 1.
-            
+
             sam_masks_sampled_ray = sam_masks[:, sampled_ray]
 
             gt_corrs = []
@@ -240,11 +243,9 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
             int_sampled_scales = ((1 - sampled_scales.squeeze()) * scale_aware_dim).long()
             gates = fixed_scale_gate[int_sampled_scales].detach()
 
-        # N_sampled_scales C H W
-        feature_with_scale = rendered_features.unsqueeze(0).repeat([sampled_scales.shape[0],1,1,1])
-        feature_with_scale = feature_with_scale * gates.unsqueeze(-1).unsqueeze(-1)
-
-        sampled_feature_with_scale = feature_with_scale[:,:,sampled_ray]
+        # Sample pixels first, then apply per-scale gates — avoids a (N_scales, C, H, W) repeat
+        # (C, S) -> (1, C, S) * (N_scales, C, 1) -> (N_scales, C, S)
+        sampled_feature_with_scale = rendered_features[:, sampled_ray].unsqueeze(0) * gates.unsqueeze(-1)
 
         scale_conditioned_features_sam = sampled_feature_with_scale.permute([0,2,1])
 
@@ -301,6 +302,9 @@ def training(dataset, opt, pipe, iteration, saving_iterations, checkpoint_iterat
         feature_gaussians.optimizer.zero_grad(set_to_none = True)
 
         iter_end.record()
+
+        if iteration % 50 == 0:
+            torch.cuda.empty_cache()
 
         if iteration % 10 == 0:
             progress_bar.set_postfix({
