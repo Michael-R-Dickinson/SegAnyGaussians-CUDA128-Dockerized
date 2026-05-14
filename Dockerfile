@@ -22,6 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     libgl1 \
     libglib2.0-0 \
+    libxi6 \
+    libxcursor1 \
+    libxinerama1 \
+    libxrandr2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.11 the default and install pip for it

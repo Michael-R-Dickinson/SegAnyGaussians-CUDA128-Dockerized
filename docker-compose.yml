@@ -18,6 +18,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_CACHE_PATH=/root/.nv/ComputeCache
+      - DISPLAY=${DISPLAY:-:0}
     volumes:
       # Source code live-mount so host edits take effect without rebuilds
       - .:/workspace
@@ -27,6 +28,12 @@ services:
       - ./sam_vit_h_4b8939.pth:/workspace/sam_vit_h_4b8939.pth:ro
       # Cache JIT-compiled sm_120 cubins across container runs
       - cuda_jit_cache:/root/.nv
+      # X11 socket for GUI apps (saga_gui.py via dearpygui)
+      # Requires: xhost +local: on the host before running
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    devices:
+      # WSL2 D3D12 interface — enables hardware-accelerated OpenGL via Mesa in the container
+      - /dev/dxg:/dev/dxg
     # Required for PyTorch DataLoader shared memory
     ipc: host
     stdin_open: true
