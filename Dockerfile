@@ -33,10 +33,10 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
     && update-alternatives --install /usr/bin/python  python  /usr/bin/python3.11 1 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
 
-# PyTorch 2.7 + CUDA 12.8 (separate layer — expensive, cache it)
+# PyTorch 2.8 + CUDA 12.8 (separate layer — expensive, cache it)
 RUN pip install --no-cache-dir \
-    torch==2.7.0 \
-    torchvision==0.22.0 \
+    torch==2.8.0+cu128 \
+    torchvision==0.23.0+cu128 \
     --index-url https://download.pytorch.org/whl/cu128
 
 # Python dependencies
