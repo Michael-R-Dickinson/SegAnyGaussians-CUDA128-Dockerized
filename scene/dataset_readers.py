@@ -246,7 +246,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
     return cam_infos
 
 # for lerf test
-def readCamerasFromLerfTransforms(path, transformsfile, white_background, extension=".jpg", mask_scale_folder=None):
+def readCamerasFromLerfTransforms(path, transformsfile, white_background, extension=".jpg", masks_folder=None, mask_scale_folder=None):
     cam_infos = []
 
     with open(os.path.join(path, transformsfile)) as json_file:
@@ -282,11 +282,14 @@ def readCamerasFromLerfTransforms(path, transformsfile, white_background, extens
             FovY = fovy
             FovX = fovx
 
+            mask_path = os.path.join(masks_folder, image_name + ".pt") if masks_folder is not None else None
+            masks = torch.load(mask_path, weights_only=False) if (mask_path is not None and os.path.exists(mask_path)) else None
+
             mask_scale_path = os.path.join(mask_scale_folder, image_name + ".pt") if mask_scale_folder is not None else None
             mask_scales = torch.load(mask_scale_path, weights_only=False) if (mask_scale_path is not None and os.path.exists(mask_scale_path)) else None
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], features=None, masks=None, mask_scales=mask_scales))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], features=None, masks=masks, mask_scales=mask_scales))
 
     return cam_infos
 
@@ -328,9 +331,11 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 def readLerfInfo(path, white_background, eval, extension=".png"):
     print("Reading Training Transforms")
+    masks_folder = os.path.join(path, "sam_masks")
+    masks_folder = masks_folder if os.path.exists(masks_folder) else None
     mask_scale_folder = os.path.join(path, "mask_scales")
     mask_scale_folder = mask_scale_folder if os.path.exists(mask_scale_folder) else None
-    train_cam_infos = readCamerasFromLerfTransforms(path, "transforms.json", white_background, extension, mask_scale_folder=mask_scale_folder)
+    train_cam_infos = readCamerasFromLerfTransforms(path, "transforms.json", white_background, extension, masks_folder=masks_folder, mask_scale_folder=mask_scale_folder)
     # print("Reading Test Transforms")
     # test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
     test_cam_infos = []
