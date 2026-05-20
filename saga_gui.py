@@ -364,14 +364,21 @@ class GaussianSplattingGUI:
             self.chosen_feature = torch.cat([self.chosen_feature, new_feats], dim=-1)
             self.prompt_num += new_feats.shape[-1]
 
-        # --- negative samples: viewport pixels outside the painted mask ---
+        # --- negative samples: penalty zone (stroke_w < dist <= stroke_w + penalty_r) ---
         H, W = self.paintbrush_mask.shape
+        stroke_w = max(1, int(dpg.get_value("_StrokeWidth")))
+        penalty_r = max(1, int(dpg.get_value("_PenaltyRadius")))
+        dist = cv2.distanceTransform(
+            (~self.paintbrush_mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE
+        )
+        penalty_zone = (dist > stroke_w) & (dist <= stroke_w + penalty_r)
+
         neg_grid_ys = np.arange(0, H, spacing)
         neg_grid_xs = np.arange(0, W, spacing)
         neg_grid_xs, neg_grid_ys = np.meshgrid(neg_grid_xs, neg_grid_ys)
         neg_grid_xs = neg_grid_xs.reshape(-1)
         neg_grid_ys = neg_grid_ys.reshape(-1)
-        neg_keep = ~self.paintbrush_mask[neg_grid_ys, neg_grid_xs]
+        neg_keep = penalty_zone[neg_grid_ys, neg_grid_xs]
         neg_ys = neg_grid_ys[neg_keep]
         neg_xs = neg_grid_xs[neg_keep]
         if len(neg_xs) > 2000:
@@ -396,9 +403,21 @@ class GaussianSplattingGUI:
         if dpg.get_value("_ScoreThres") > 0:
             return
 
+        stroke_w = max(1, int(dpg.get_value("_StrokeWidth")))
+        penalty_r = max(1, int(dpg.get_value("_PenaltyRadius")))
+        dist = cv2.distanceTransform(
+            (~self.paintbrush_mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE
+        )
+        stroke_zone = (dist > 0) & (dist <= stroke_w)
+        penalty_zone = (dist > stroke_w) & (dist <= stroke_w + penalty_r)
+
         image = self.render_buffer.reshape(self.height, self.width, 3)
         orange = np.array([1.0, 0.45, 0.0], dtype=np.float32)
+        light_orange = np.array([1.0, 0.70, 0.3], dtype=np.float32)
+        light_red = np.array([1.0, 0.2, 0.2], dtype=np.float32)
         image[self.paintbrush_mask] = image[self.paintbrush_mask] * 0.45 + orange * 0.55
+        image[stroke_zone] = image[stroke_zone] * 0.70 + light_orange * 0.30
+        image[penalty_zone] = image[penalty_zone] * 0.80 + light_red * 0.20
         self.render_buffer = image.reshape(-1).astype(np.float32)
 
     def register_dpg(self):
@@ -490,6 +509,10 @@ class GaussianSplattingGUI:
                                min_value=1, max_value=128, tag="_BrushSampleSpacing")
             dpg.add_slider_float(label="neg penalty weight", default_value=0.5,
                                  min_value=0.0, max_value=2.0, tag="_NegWeight")
+            dpg.add_slider_int(label="neg stroke width (px)", default_value=15,
+                               min_value=1, max_value=64, tag="_StrokeWidth")
+            dpg.add_slider_int(label="neg penalty radius (px)", default_value=80,
+                               min_value=1, max_value=300, tag="_PenaltyRadius")
             dpg.add_button(label="commit brush prompts", callback=callback_commit_brush_prompts, user_data="Some Data")
             
             dpg.add_text("\n")
