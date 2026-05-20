@@ -251,6 +251,7 @@ class GaussianSplattingGUI:
         self.paintbrush_painting = False
         self.commit_brush_prompts = False
         self.paintbrush_mask = np.zeros((self.height, self.width), dtype=bool)
+        self.show_zone_overlays = False
 
         self.render_mode_rgb = False
         self.render_mode_similarity = False
@@ -403,21 +404,23 @@ class GaussianSplattingGUI:
         if dpg.get_value("_ScoreThres") > 0:
             return
 
-        stroke_w = max(1, int(dpg.get_value("_StrokeWidth")))
-        penalty_r = max(1, int(dpg.get_value("_PenaltyRadius")))
-        dist = cv2.distanceTransform(
-            (~self.paintbrush_mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE
-        )
-        stroke_zone = (dist > 0) & (dist <= stroke_w)
-        penalty_zone = (dist > stroke_w) & (dist <= stroke_w + penalty_r)
-
         image = self.render_buffer.reshape(self.height, self.width, 3)
         orange = np.array([1.0, 0.45, 0.0], dtype=np.float32)
-        light_orange = np.array([1.0, 0.70, 0.3], dtype=np.float32)
-        light_red = np.array([1.0, 0.2, 0.2], dtype=np.float32)
         image[self.paintbrush_mask] = image[self.paintbrush_mask] * 0.45 + orange * 0.55
-        image[stroke_zone] = image[stroke_zone] * 0.70 + light_orange * 0.30
-        image[penalty_zone] = image[penalty_zone] * 0.80 + light_red * 0.20
+
+        if self.show_zone_overlays:
+            stroke_w = max(1, int(dpg.get_value("_StrokeWidth")))
+            penalty_r = max(1, int(dpg.get_value("_PenaltyRadius")))
+            dist = cv2.distanceTransform(
+                (~self.paintbrush_mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE
+            )
+            stroke_zone = (dist > 0) & (dist <= stroke_w)
+            penalty_zone = (dist > stroke_w) & (dist <= stroke_w + penalty_r)
+            light_orange = np.array([1.0, 0.70, 0.3], dtype=np.float32)
+            light_red = np.array([1.0, 0.2, 0.2], dtype=np.float32)
+            image[stroke_zone] = image[stroke_zone] * 0.70 + light_orange * 0.30
+            image[penalty_zone] = image[penalty_zone] * 0.80 + light_red * 0.20
+
         self.render_buffer = image.reshape(-1).astype(np.float32)
 
     def register_dpg(self):
@@ -448,6 +451,8 @@ class GaussianSplattingGUI:
             self.paintbrush_painting = False
             if not self.paintbrush_mode:
                 self.clear_paintbrush()
+        def show_zone_overlays_callback(sender):
+            self.show_zone_overlays = dpg.get_value(sender)
         def preview_callback(sender):
             self.preview = dpg.get_value(sender)
             # print("binary_threshold_button = ", self.binary_threshold_button)
@@ -503,6 +508,7 @@ class GaussianSplattingGUI:
             dpg.add_checkbox(label="multi-clickmode", callback=clickmode_multi_callback, user_data="Some Data")
             dpg.add_checkbox(label="preview_segmentation_in_2d", callback=preview_callback, user_data="Some Data")
             dpg.add_checkbox(label="2d paintbrush mode", callback=paintbrush_mode_callback, user_data="Some Data")
+            dpg.add_checkbox(label="show zone overlays", callback=show_zone_overlays_callback, user_data="Some Data")
             dpg.add_slider_int(label="brush radius", default_value=12,
                                min_value=1, max_value=128, tag="_BrushRadius")
             dpg.add_slider_int(label="brush sample spacing", default_value=16,
@@ -827,16 +833,16 @@ class GaussianSplattingGUI:
             
             score_map = featmap @ self.chosen_feature
             score_map = (score_map + 1.0) / 2
-            max_pos_map = torch.max(score_map, dim=-1).values  # (H, W)
+            mean_pos_map = score_map.mean(dim=-1)  # (H, W)
 
             neg_weight = dpg.get_value('_NegWeight')
             if neg_weight > 0.0 and hasattr(self, 'negative_feature') and self.negative_feature is not None:
                 neg_map = featmap @ self.negative_feature
                 neg_map = (neg_map + 1.0) / 2
-                max_neg_map = torch.max(neg_map, dim=-1).values  # (H, W)
-                combined_map = max_pos_map - neg_weight * max_neg_map
+                mean_neg_map = neg_map.mean(dim=-1)  # (H, W)
+                combined_map = mean_pos_map - neg_weight * mean_neg_map
             else:
-                combined_map = max_pos_map
+                combined_map = mean_pos_map
 
             score_binary = combined_map > dpg.get_value('_ScoreThres')
             score_map = combined_map
@@ -867,16 +873,16 @@ class GaussianSplattingGUI:
 
                 score_pts = scale_gated_feat_pts @ self.chosen_feature
                 score_pts = (score_pts + 1.0) / 2
-                max_pos_pts = score_pts.max(dim=1).values  # (N,)
+                mean_pos_pts = score_pts.mean(dim=1)  # (N,)
 
                 neg_weight = dpg.get_value('_NegWeight')
                 if neg_weight > 0.0 and hasattr(self, 'negative_feature') and self.negative_feature is not None:
                     neg_pts = scale_gated_feat_pts @ self.negative_feature
                     neg_pts = (neg_pts + 1.0) / 2
-                    max_neg_pts = neg_pts.max(dim=1).values  # (N,)
-                    combined_pts = max_pos_pts - neg_weight * max_neg_pts
+                    mean_neg_pts = neg_pts.mean(dim=1)  # (N,)
+                    combined_pts = mean_pos_pts - neg_weight * mean_neg_pts
                 else:
-                    combined_pts = max_pos_pts
+                    combined_pts = mean_pos_pts
 
                 self.score_pts_binary = combined_pts > dpg.get_value('_ScoreThres')
 
