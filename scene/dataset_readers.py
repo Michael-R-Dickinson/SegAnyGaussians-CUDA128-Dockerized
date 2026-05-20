@@ -234,7 +234,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            image = Image.fromarray(np.array(arr*255.0, dtype=np.uint8), "RGB")
 
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
             FovY = fovy 
@@ -246,31 +246,20 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
     return cam_infos
 
 # for lerf test
-def readCamerasFromLerfTransforms(path, transformsfile, white_background, extension=".jpg"):
+def readCamerasFromLerfTransforms(path, transformsfile, white_background, extension=".jpg", mask_scale_folder=None):
     cam_infos = []
 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
-        # fovx = contents["camera_angle_x"]
-
-        
 
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
-            # cam_name = os.path.join(path, frame["file_path"])
-
             tmp = np.array(frame["transform_matrix"])
             tmp_R = tmp[:3,:3]
             tmp_R = -tmp_R
             tmp_R[:,0] = -tmp_R[:,0]
             tmp[:3,:3] = tmp_R
             matrix = np.linalg.inv(tmp)
-            # R = -np.transpose(matrix[:3,:3])
-            # R[:,0] = -R[:,0]
-            # T = -matrix[:3, 3]
-
-            # matrix[:3,1] *= -1
-            # matrix[:3,2] *= -1
 
             R = np.transpose(matrix[:3,:3])
             T = matrix[:3, 3]
@@ -285,18 +274,20 @@ def readCamerasFromLerfTransforms(path, transformsfile, white_background, extens
 
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            image = Image.fromarray(np.array(arr*255.0, dtype=np.uint8), "RGB")
 
-            # fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
             fovx = 2 * np.arctan(frame['w'] / (2 * frame['fl_x']))
             fovy = 2 * np.arctan(frame['h'] / (2 * frame['fl_y']))
 
-            FovY = fovy 
+            FovY = fovy
             FovX = fovx
 
+            mask_scale_path = os.path.join(mask_scale_folder, image_name + ".pt") if mask_scale_folder is not None else None
+            mask_scales = torch.load(mask_scale_path, weights_only=False) if (mask_scale_path is not None and os.path.exists(mask_scale_path)) else None
+
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], features = None, masks = None, mask_scales = None))
-            
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], features=None, masks=None, mask_scales=mask_scales))
+
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
@@ -337,7 +328,9 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 def readLerfInfo(path, white_background, eval, extension=".png"):
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromLerfTransforms(path, "transforms.json", white_background, extension)
+    mask_scale_folder = os.path.join(path, "mask_scales")
+    mask_scale_folder = mask_scale_folder if os.path.exists(mask_scale_folder) else None
+    train_cam_infos = readCamerasFromLerfTransforms(path, "transforms.json", white_background, extension, mask_scale_folder=mask_scale_folder)
     # print("Reading Test Transforms")
     # test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
     test_cam_infos = []
