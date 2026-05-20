@@ -247,6 +247,10 @@ class GaussianSplattingGUI:
         self.reload_flag = False        # reload the whole scene / point cloud
         self.object_seg_id = 0          # to store the segmented object with increasing index order (path at: ./)
         self.cluster_in_3D_flag = False
+        self.paintbrush_mode = False
+        self.paintbrush_painting = False
+        self.commit_brush_prompts = False
+        self.paintbrush_mask = np.zeros((self.height, self.width), dtype=bool)
 
         self.render_mode_rgb = False
         self.render_mode_similarity = False
@@ -291,6 +295,91 @@ class GaussianSplattingGUI:
 
         return np.stack((r, g, b), axis=-1)
 
+    def clear_paintbrush(self):
+        self.paintbrush_mask.fill(False)
+        self.paintbrush_painting = False
+
+    def mouse_to_image_xy(self, xy):
+        x, y = xy
+        try:
+            image_min = dpg.get_item_rect_min("_render_image")
+            x -= image_min[0]
+            y -= image_min[1]
+        except:
+            pass
+
+        x = int(x)
+        y = int(y)
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return None
+        return x, y
+
+    def paint_at(self, xy):
+        xy = self.mouse_to_image_xy(xy)
+        if xy is None:
+            return
+
+        x, y = xy
+        radius = max(1, int(dpg.get_value("_BrushRadius")))
+        x0 = max(0, x - radius)
+        x1 = min(self.width, x + radius + 1)
+        y0 = max(0, y - radius)
+        y1 = min(self.height, y + radius + 1)
+
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        circle = (xx - x) ** 2 + (yy - y) ** 2 <= radius ** 2
+        self.paintbrush_mask[y0:y1, x0:x1][circle] = True
+
+    def commit_paintbrush_features(self, featmap):
+        if not self.paintbrush_mask.any():
+            self.commit_brush_prompts = False
+            return
+
+        spacing = max(1, int(dpg.get_value("_BrushSampleSpacing")))
+        painted_ys, painted_xs = np.where(self.paintbrush_mask)
+        y0, y1 = painted_ys.min(), painted_ys.max()
+        x0, x1 = painted_xs.min(), painted_xs.max()
+        grid_ys = np.arange(y0, y1 + 1, spacing)
+        grid_xs = np.arange(x0, x1 + 1, spacing)
+        grid_xs, grid_ys = np.meshgrid(grid_xs, grid_ys)
+        grid_xs = grid_xs.reshape(-1)
+        grid_ys = grid_ys.reshape(-1)
+        keep = self.paintbrush_mask[grid_ys, grid_xs]
+        ys = grid_ys[keep]
+        xs = grid_xs[keep]
+        if len(xs) == 0:
+            ys = np.array([int(painted_ys.mean())])
+            xs = np.array([int(painted_xs.mean())])
+        if len(xs) == 0:
+            self.commit_brush_prompts = False
+            return
+
+        ys = torch.from_numpy(ys).long().to(featmap.device)
+        xs = torch.from_numpy(xs).long().to(featmap.device)
+        new_feats = featmap[ys, xs, :].T
+        if (self.prompt_num == 0) or (self.clickmode_multi_button == False):
+            self.chosen_feature = new_feats
+            self.prompt_num = new_feats.shape[-1]
+        else:
+            self.chosen_feature = torch.cat([self.chosen_feature, new_feats], dim=-1)
+            self.prompt_num += new_feats.shape[-1]
+
+        self.new_click = False
+        self.new_click_xy = []
+        self.commit_brush_prompts = False
+        self.clear_paintbrush()
+
+    def apply_paintbrush_overlay(self):
+        if not self.paintbrush_mode or not self.paintbrush_mask.any():
+            return
+        if dpg.get_value("_ScoreThres") > 0:
+            return
+
+        image = self.render_buffer.reshape(self.height, self.width, 3)
+        orange = np.array([1.0, 0.45, 0.0], dtype=np.float32)
+        image[self.paintbrush_mask] = image[self.paintbrush_mask] * 0.45 + orange * 0.55
+        self.render_buffer = image.reshape(-1).astype(np.float32)
+
     def register_dpg(self):
         
         ### register texture
@@ -299,7 +388,7 @@ class GaussianSplattingGUI:
 
         ### register window
         with dpg.window(tag="_primary_window", width=self.window_width+300, height=self.window_height):
-            dpg.add_image("_texture")   # add the texture
+            dpg.add_image("_texture", tag="_render_image")   # add the texture
 
         dpg.set_primary_window("_primary_window", True)
 
@@ -312,6 +401,13 @@ class GaussianSplattingGUI:
         def clickmode_multi_callback(sender):
             self.clickmode_multi_button = dpg.get_value(sender)
             print("clickmode_multi_button = ", self.clickmode_multi_button)
+        def paintbrush_mode_callback(sender):
+            self.paintbrush_mode = dpg.get_value(sender)
+            self.moving = False
+            self.moving_middle = False
+            self.paintbrush_painting = False
+            if not self.paintbrush_mode:
+                self.clear_paintbrush()
         def preview_callback(sender):
             self.preview = dpg.get_value(sender)
             # print("binary_threshold_button = ", self.binary_threshold_button)
@@ -321,6 +417,8 @@ class GaussianSplattingGUI:
             self.roll_back = True
         def callback_segment3d():
             self.segment3d_flag = True
+        def callback_commit_brush_prompts():
+            self.commit_brush_prompts = True
         def callback_save():
             self.save_flag = True
         def callback_reload():
@@ -364,6 +462,12 @@ class GaussianSplattingGUI:
             dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
             dpg.add_checkbox(label="multi-clickmode", callback=clickmode_multi_callback, user_data="Some Data")
             dpg.add_checkbox(label="preview_segmentation_in_2d", callback=preview_callback, user_data="Some Data")
+            dpg.add_checkbox(label="2d paintbrush mode", callback=paintbrush_mode_callback, user_data="Some Data")
+            dpg.add_slider_int(label="brush radius", default_value=12,
+                               min_value=1, max_value=128, tag="_BrushRadius")
+            dpg.add_slider_int(label="brush sample spacing", default_value=16,
+                               min_value=1, max_value=128, tag="_BrushSampleSpacing")
+            dpg.add_button(label="commit brush prompts", callback=callback_commit_brush_prompts, user_data="Some Data")
             
             dpg.add_text("\n")
             dpg.add_button(label="segment3d", callback=callback_segment3d, user_data="Some Data")
@@ -403,6 +507,8 @@ class GaussianSplattingGUI:
         def callback_camera_wheel_scale(sender, app_data):
             if not dpg.is_item_focused("_primary_window"):
                 return
+            if self.paintbrush_mode:
+                return
             delta = app_data
             self.camera.scale(delta)
             self.update_camera = True
@@ -411,14 +517,27 @@ class GaussianSplattingGUI:
         
 
         def toggle_moving_left():
+            if self.paintbrush_mode:
+                self.paintbrush_painting = not self.paintbrush_painting
+                if self.paintbrush_painting:
+                    self.paint_at(dpg.get_mouse_pos(local=False))
+                return
             self.moving = not self.moving
 
 
         def toggle_moving_middle():
+            if self.paintbrush_mode:
+                return
             self.moving_middle = not self.moving_middle
 
 
         def move_handler(sender, pos, user):
+            if self.paintbrush_mode:
+                if self.paintbrush_painting and dpg.is_item_focused("_primary_window"):
+                    self.paint_at(pos)
+                self.mouse_pos = pos
+                return
+
             if self.moving and dpg.is_item_focused("_primary_window"):
                 dx = self.mouse_pos[0] - pos[0]
                 dy = self.mouse_pos[1] - pos[1]
@@ -441,9 +560,14 @@ class GaussianSplattingGUI:
             #     return
             xy = dpg.get_mouse_pos(local=False)
             dpg.set_value("pos_item", f"Mouse position = ({xy[0]}, {xy[1]})")
+            if self.paintbrush_mode:
+                return
             if self.clickmode_button and app_data == 1:     # in the click mode and right click
-                print(xy)
-                self.new_click_xy = np.array(xy)
+                image_xy = self.mouse_to_image_xy(xy)
+                if image_xy is None:
+                    return
+                print(image_xy)
+                self.new_click_xy = np.array(image_xy)
                 self.new_click = True
 
 
@@ -600,8 +724,11 @@ class GaussianSplattingGUI:
         
         if self.clear_edit:
             self.new_click_xy = []
+            self.clear_paintbrush()
             self.clear_edit = False
             self.prompt_num = 0
+            if hasattr(self, "chosen_feature"):
+                del self.chosen_feature
             try:
                 self.engine['scene'].clear_segment()
                 self.engine['feature'].clear_segment()
@@ -610,8 +737,11 @@ class GaussianSplattingGUI:
 
         if self.roll_back:
             self.new_click_xy = []
+            self.clear_paintbrush()
             self.roll_back = False
             self.prompt_num = 0
+            if hasattr(self, "chosen_feature"):
+                del self.chosen_feature
             # try:
             self.engine['scene'].roll_back()
             self.engine['feature'].roll_back()
@@ -628,10 +758,13 @@ class GaussianSplattingGUI:
             self.load_model = True
 
         score_map = None
-        if len(self.new_click_xy) > 0:
+        featmap = scale_gated_feat.reshape(H, W, -1)
 
-            featmap = scale_gated_feat.reshape(H, W, -1)
-            
+        if self.commit_brush_prompts:
+            self.commit_paintbrush_features(featmap)
+
+        if self.prompt_num > 0 or self.new_click:
+
             if self.new_click:
                 xy = self.new_click_xy
                 new_feat = featmap[int(xy[1])%H, int(xy[0])%W, :].reshape(featmap.shape[-1], -1)
@@ -722,6 +855,7 @@ class GaussianSplattingGUI:
 
             render_num += 1
         self.render_buffer /= render_num
+        self.apply_paintbrush_overlay()
 
         dpg.set_value("_texture", self.render_buffer)
 
