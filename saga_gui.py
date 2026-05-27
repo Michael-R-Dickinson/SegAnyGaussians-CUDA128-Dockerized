@@ -331,7 +331,7 @@ class GaussianSplattingGUI:
         circle = (xx - x) ** 2 + (yy - y) ** 2 <= radius ** 2
         self.paintbrush_mask[y0:y1, x0:x1][circle] = True
 
-    def commit_paintbrush_features(self, featmap):
+    def commit_paintbrush_features(self, raw_featmap):
         if not self.paintbrush_mask.any():
             self.commit_brush_prompts = False
             return
@@ -355,14 +355,14 @@ class GaussianSplattingGUI:
             self.commit_brush_prompts = False
             return
 
-        ys = torch.from_numpy(ys).long().to(featmap.device)
-        xs = torch.from_numpy(xs).long().to(featmap.device)
-        new_feats = featmap[ys, xs, :].T
+        ys = torch.from_numpy(ys).long().to(raw_featmap.device)
+        xs = torch.from_numpy(xs).long().to(raw_featmap.device)
+        new_feats = raw_featmap[ys, xs, :].T
         if (self.prompt_num == 0) or (self.clickmode_multi_button == False):
-            self.chosen_feature = new_feats
+            self.chosen_feature_raw = new_feats
             self.prompt_num = new_feats.shape[-1]
         else:
-            self.chosen_feature = torch.cat([self.chosen_feature, new_feats], dim=-1)
+            self.chosen_feature_raw = torch.cat([self.chosen_feature_raw, new_feats], dim=-1)
             self.prompt_num += new_feats.shape[-1]
 
         # --- negative samples: penalty zone (stroke_w < dist <= stroke_w + penalty_r) ---
@@ -387,11 +387,11 @@ class GaussianSplattingGUI:
             neg_ys = neg_ys[idx]
             neg_xs = neg_xs[idx]
         if len(neg_xs) > 0:
-            neg_ys_t = torch.from_numpy(neg_ys).long().to(featmap.device)
-            neg_xs_t = torch.from_numpy(neg_xs).long().to(featmap.device)
-            self.negative_feature = featmap[neg_ys_t, neg_xs_t, :].T
+            neg_ys_t = torch.from_numpy(neg_ys).long().to(raw_featmap.device)
+            neg_xs_t = torch.from_numpy(neg_xs).long().to(raw_featmap.device)
+            self.negative_feature_raw = raw_featmap[neg_ys_t, neg_xs_t, :].T
         else:
-            self.negative_feature = None
+            self.negative_feature_raw = None
 
         self.new_click = False
         self.new_click_xy = []
@@ -766,6 +766,7 @@ class GaussianSplattingGUI:
         sems = feature_outputs["render"].permute(1, 2, 0)
         H, W, C = sems.shape
         sems /= (torch.norm(sems, dim=-1, keepdim=True) + 1e-6)
+        raw_featmap = sems.reshape(H, W, -1)
         sem_transed = sems @ self.proj_mat
         sem_transed_rgb = torch.clip(sem_transed*0.5+0.5, 0, 1)
 
@@ -779,10 +780,10 @@ class GaussianSplattingGUI:
             self.clear_paintbrush()
             self.clear_edit = False
             self.prompt_num = 0
-            if hasattr(self, "chosen_feature"):
-                del self.chosen_feature
-            if hasattr(self, "negative_feature"):
-                del self.negative_feature
+            if hasattr(self, "chosen_feature_raw"):
+                del self.chosen_feature_raw
+            if hasattr(self, "negative_feature_raw"):
+                del self.negative_feature_raw
             try:
                 self.engine['scene'].clear_segment()
                 self.engine['feature'].clear_segment()
@@ -794,10 +795,10 @@ class GaussianSplattingGUI:
             self.clear_paintbrush()
             self.roll_back = False
             self.prompt_num = 0
-            if hasattr(self, "chosen_feature"):
-                del self.chosen_feature
-            if hasattr(self, "negative_feature"):
-                del self.negative_feature
+            if hasattr(self, "chosen_feature_raw"):
+                del self.chosen_feature_raw
+            if hasattr(self, "negative_feature_raw"):
+                del self.negative_feature_raw
             # try:
             self.engine['scene'].roll_back()
             self.engine['feature'].roll_back()
@@ -817,31 +818,38 @@ class GaussianSplattingGUI:
         featmap = scale_gated_feat.reshape(H, W, -1)
 
         if self.commit_brush_prompts:
-            self.commit_paintbrush_features(featmap)
+            self.commit_paintbrush_features(raw_featmap)
 
         if self.prompt_num > 0 or self.new_click:
 
             if self.new_click:
                 xy = self.new_click_xy
-                new_feat = featmap[int(xy[1])%H, int(xy[0])%W, :].reshape(featmap.shape[-1], -1)
+                new_feat_raw = raw_featmap[int(xy[1])%H, int(xy[0])%W, :].reshape(raw_featmap.shape[-1], -1)
                 if (self.prompt_num == 0) or (self.clickmode_multi_button == False):
-                    self.chosen_feature = new_feat
+                    self.chosen_feature_raw = new_feat_raw
                 else:
-                    self.chosen_feature = torch.cat([self.chosen_feature, new_feat], dim=-1)    # extend to get more prompt features
+                    self.chosen_feature_raw = torch.cat([self.chosen_feature_raw, new_feat_raw], dim=-1)
                 self.prompt_num += 1
                 self.new_click = False
-            
-            score_map = featmap @ self.chosen_feature
+
+            gated_chosen = torch.nn.functional.normalize(
+                self.chosen_feature_raw * self.gates.unsqueeze(-1), dim=0, p=2
+            )
+            score_map = featmap @ gated_chosen
             score_map = (score_map + 1.0) / 2
             mean_pos_map = score_map.mean(dim=-1)  # (H, W)
 
             neg_weight = dpg.get_value('_NegWeight')
-            if neg_weight > 0.0 and hasattr(self, 'negative_feature') and self.negative_feature is not None:
-                neg_map = featmap @ self.negative_feature
+            if neg_weight > 0.0 and hasattr(self, 'negative_feature_raw') and self.negative_feature_raw is not None:
+                gated_neg = torch.nn.functional.normalize(
+                    self.negative_feature_raw * self.gates.unsqueeze(-1), dim=0, p=2
+                )
+                neg_map = featmap @ gated_neg
                 neg_map = (neg_map + 1.0) / 2
                 mean_neg_map = neg_map.mean(dim=-1)  # (H, W)
                 combined_map = mean_pos_map - neg_weight * mean_neg_map
             else:
+                gated_neg = None
                 combined_map = mean_pos_map
 
             score_binary = combined_map > dpg.get_value('_ScoreThres')
@@ -871,13 +879,12 @@ class GaussianSplattingGUI:
                 scale_gated_feat_pts = feat_pts * self.gates.unsqueeze(0)
                 scale_gated_feat_pts = torch.nn.functional.normalize(scale_gated_feat_pts, dim = -1, p = 2)
 
-                score_pts = scale_gated_feat_pts @ self.chosen_feature
+                score_pts = scale_gated_feat_pts @ gated_chosen
                 score_pts = (score_pts + 1.0) / 2
                 mean_pos_pts = score_pts.mean(dim=1)  # (N,)
 
-                neg_weight = dpg.get_value('_NegWeight')
-                if neg_weight > 0.0 and hasattr(self, 'negative_feature') and self.negative_feature is not None:
-                    neg_pts = scale_gated_feat_pts @ self.negative_feature
+                if gated_neg is not None:
+                    neg_pts = scale_gated_feat_pts @ gated_neg
                     neg_pts = (neg_pts + 1.0) / 2
                     mean_neg_pts = neg_pts.mean(dim=1)  # (N,)
                     combined_pts = mean_pos_pts - neg_weight * mean_neg_pts
