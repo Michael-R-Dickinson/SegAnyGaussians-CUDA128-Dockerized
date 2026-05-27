@@ -16,7 +16,7 @@ services:
               capabilities: [gpu]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display
       - CUDA_CACHE_PATH=/root/.nv/ComputeCache
       - DISPLAY=${DISPLAY:-:0}
     volumes:
