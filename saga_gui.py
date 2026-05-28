@@ -449,7 +449,10 @@ class GaussianSplattingGUI:
             self.moving = False
             self.moving_middle = False
             self.paintbrush_painting = False
-            if not self.paintbrush_mode:
+            if self.paintbrush_mode:
+                self.clear_edit = True
+                dpg.set_value("_ScoreThres", 0.0)
+            else:
                 self.clear_paintbrush()
         def show_zone_overlays_callback(sender):
             self.show_zone_overlays = dpg.get_value(sender)
@@ -507,7 +510,7 @@ class GaussianSplattingGUI:
             dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
             dpg.add_checkbox(label="multi-clickmode", callback=clickmode_multi_callback, user_data="Some Data")
             dpg.add_checkbox(label="preview_segmentation_in_2d", callback=preview_callback, user_data="Some Data")
-            dpg.add_checkbox(label="2d paintbrush mode", callback=paintbrush_mode_callback, user_data="Some Data")
+            dpg.add_checkbox(label="2d paintbrush mode", callback=paintbrush_mode_callback, user_data="Some Data", tag="_paintbrush_mode")
             dpg.add_checkbox(label="show zone overlays", callback=show_zone_overlays_callback, user_data="Some Data")
             dpg.add_slider_int(label="brush radius", default_value=12,
                                min_value=1, max_value=128, tag="_BrushRadius")
@@ -559,7 +562,7 @@ class GaussianSplattingGUI:
         def callback_camera_wheel_scale(sender, app_data):
             if not dpg.is_item_focused("_primary_window"):
                 return
-            if self.paintbrush_mode:
+            if self.paintbrush_mode and self.paintbrush_mask.any():
                 return
             delta = app_data
             self.camera.scale(delta)
@@ -578,7 +581,7 @@ class GaussianSplattingGUI:
 
 
         def toggle_moving_middle():
-            if self.paintbrush_mode:
+            if self.paintbrush_mode and self.paintbrush_mask.any():
                 return
             self.moving_middle = not self.moving_middle
 
@@ -587,6 +590,12 @@ class GaussianSplattingGUI:
             if self.paintbrush_mode:
                 if self.paintbrush_painting and dpg.is_item_focused("_primary_window"):
                     self.paint_at(pos)
+                elif not self.paintbrush_mask.any() and self.moving_middle and dpg.is_item_focused("_primary_window"):
+                    dx = self.mouse_pos[0] - pos[0]
+                    dy = self.mouse_pos[1] - pos[1]
+                    if dx != 0.0 or dy != 0.0:
+                        self.camera.pan(-dx*20, dy*20)
+                        self.update_camera = True
                 self.mouse_pos = pos
                 return
 
@@ -634,7 +643,7 @@ class GaussianSplattingGUI:
             key = app_data[0] if isinstance(app_data, (list, tuple)) else app_data
             if key not in _WASD_KEYS:
                 return
-            if self.paintbrush_mode:
+            if self.paintbrush_mode and self.paintbrush_mask.any():
                 return
             if dpg.is_item_active("save_name"):
                 return
@@ -666,7 +675,7 @@ class GaussianSplattingGUI:
                 key = app_data[0] if isinstance(app_data, (list, tuple)) else app_data
                 if key not in (_IMGUI_Q, _IMGUI_E):
                     return
-                if self.paintbrush_mode:
+                if self.paintbrush_mode and self.paintbrush_mask.any():
                     return
                 if dpg.is_item_active("save_name"):
                     return
@@ -862,6 +871,8 @@ class GaussianSplattingGUI:
 
         if self.commit_brush_prompts:
             self.commit_paintbrush_features(raw_featmap)
+            self.paintbrush_mode = False
+            dpg.set_value("_paintbrush_mode", False)
 
         if self.prompt_num > 0 or self.new_click:
 
