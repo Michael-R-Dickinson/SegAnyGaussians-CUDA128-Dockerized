@@ -623,16 +623,59 @@ class GaussianSplattingGUI:
                 self.new_click = True
 
 
+        # On Linux/X11, DearPyGUI reports ImGui-native key codes (enum starting at 512)
+        # rather than Win32 VK codes, so dpg.mvKey_* constants don't match.
+        # Values confirmed from debug output: W=568, A=546, S=564, D=549.
+        _IMGUI_W, _IMGUI_A, _IMGUI_S, _IMGUI_D = 568, 546, 564, 549
+        _IMGUI_Q, _IMGUI_E = 562, 550
+        _WASD_KEYS = {_IMGUI_W, _IMGUI_A, _IMGUI_S, _IMGUI_D}
+
+        def callback_key_wasd(sender, app_data):
+            key = app_data[0] if isinstance(app_data, (list, tuple)) else app_data
+            if key not in _WASD_KEYS:
+                return
+            if self.paintbrush_mode:
+                return
+            if dpg.is_item_active("save_name"):
+                return
+            step = 50.0
+            if key == _IMGUI_W:
+                self.camera.pan(0, -step)
+            elif key == _IMGUI_S:
+                self.camera.pan(0, step)
+            elif key == _IMGUI_A:
+                self.camera.pan(step, 0)
+            elif key == _IMGUI_D:
+                self.camera.pan(-step, 0)
+            self.update_camera = True
+
         with dpg.handler_registry():
             dpg.add_mouse_wheel_handler(callback=callback_camera_wheel_scale)
-            
+
             dpg.add_mouse_click_handler(dpg.mvMouseButton_Left, callback=lambda:toggle_moving_left())
             dpg.add_mouse_release_handler(dpg.mvMouseButton_Left, callback=lambda:toggle_moving_left())
             dpg.add_mouse_click_handler(dpg.mvMouseButton_Middle, callback=lambda:toggle_moving_middle())
             dpg.add_mouse_release_handler(dpg.mvMouseButton_Middle, callback=lambda:toggle_moving_middle())
             dpg.add_mouse_move_handler(callback=lambda s, a, u:move_handler(s, a, u))
-            
+
             dpg.add_mouse_click_handler(callback=change_pos)
+
+            dpg.add_key_down_handler(callback=callback_key_wasd)
+
+            def callback_key_roll(sender, app_data):
+                key = app_data[0] if isinstance(app_data, (list, tuple)) else app_data
+                if key not in (_IMGUI_Q, _IMGUI_E):
+                    return
+                if self.paintbrush_mode:
+                    return
+                if dpg.is_item_active("save_name"):
+                    return
+                forward = self.camera.rot.as_matrix()[:3, 2]
+                angle = np.radians(-30) if key == _IMGUI_Q else np.radians(30)
+                self.camera.rot = R.from_rotvec(forward * angle) * self.camera.rot
+                self.update_camera = True
+
+            dpg.add_key_press_handler(callback=callback_key_roll)
             
         dpg.create_viewport(title="Gaussian-Splatting-Viewer", width=self.window_width+320, height=self.window_height, resizable=False)
 
