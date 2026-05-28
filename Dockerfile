@@ -12,6 +12,7 @@ WORKDIR /workspace
 # System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
+    colmap \
     python3.11-dev \
     python3.11-venv \
     build-essential \
