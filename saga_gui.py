@@ -251,6 +251,7 @@ class GaussianSplattingGUI:
         self.paintbrush_painting = False
         self.commit_brush_prompts = False
         self.paintbrush_mask = np.zeros((self.height, self.width), dtype=bool)
+        self.stroke_snapshots = []
         self.show_zone_overlays = False
 
         self.render_mode_rgb = False
@@ -299,6 +300,7 @@ class GaussianSplattingGUI:
     def clear_paintbrush(self):
         self.paintbrush_mask.fill(False)
         self.paintbrush_painting = False
+        self.stroke_snapshots.clear()
 
     def mouse_to_image_xy(self, xy):
         x, y = xy
@@ -573,6 +575,8 @@ class GaussianSplattingGUI:
 
         def toggle_moving_left():
             if self.paintbrush_mode:
+                if not self.paintbrush_painting:  # stroke starting — snapshot pre-stroke mask
+                    self.stroke_snapshots.append(self.paintbrush_mask.copy())
                 self.paintbrush_painting = not self.paintbrush_painting
                 if self.paintbrush_painting:
                     self.paint_at(dpg.get_mouse_pos(local=False))
@@ -637,6 +641,8 @@ class GaussianSplattingGUI:
         # Values confirmed from debug output: W=568, A=546, S=564, D=549.
         _IMGUI_W, _IMGUI_A, _IMGUI_S, _IMGUI_D = 568, 546, 564, 549
         _IMGUI_Q, _IMGUI_E = 562, 550
+        _IMGUI_Z = 571
+        _IMGUI_LCTRL = 527  # ImGuiKey_LeftCtrl
         _WASD_KEYS = {_IMGUI_W, _IMGUI_A, _IMGUI_S, _IMGUI_D}
 
         def callback_key_wasd(sender, app_data):
@@ -685,7 +691,21 @@ class GaussianSplattingGUI:
                 self.update_camera = True
 
             dpg.add_key_press_handler(callback=callback_key_roll)
-            
+
+            def callback_key_undo(sender, app_data):
+                key = app_data[0] if isinstance(app_data, (list, tuple)) else app_data
+                if key != _IMGUI_Z:
+                    return
+                if not dpg.is_key_down(_IMGUI_LCTRL):
+                    return
+                if not self.paintbrush_mode or not self.stroke_snapshots:
+                    return
+                self.paintbrush_mask = self.stroke_snapshots.pop()
+                if not self.paintbrush_mask.any():
+                    self.paintbrush_painting = False
+
+            dpg.add_key_press_handler(callback=callback_key_undo)
+
         dpg.create_viewport(title="Gaussian-Splatting-Viewer", width=self.window_width+320, height=self.window_height, resizable=False)
 
         ### global theme
