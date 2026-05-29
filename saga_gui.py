@@ -258,6 +258,12 @@ class GaussianSplattingGUI:
         self.render_mode_pca = False
         self.render_mode_cluster = False
 
+        self.yolo_enabled = False
+        self.yolo_detector = None          # lazy-built on first enable
+        self.yolo_labels = []
+        self.yolo_scores = []
+        self.yolo_boxes = np.zeros((0, 4))
+
         self.save_flag = False
     def __del__(self):
         dpg.destroy_context()
@@ -423,6 +429,19 @@ class GaussianSplattingGUI:
 
         self.render_buffer = image.reshape(-1).astype(np.float32)
 
+    def draw_yolo_overlay(self):
+        if len(self.yolo_boxes) == 0:
+            return
+        image = np.ascontiguousarray(
+            self.render_buffer.reshape(self.height, self.width, 3))
+        color = (0.0, 1.0, 0.0)  # green, RGB floats (buffer is [0,1])
+        for (x1, y1, x2, y2), label, score in zip(
+                self.yolo_boxes.astype(int), self.yolo_labels, self.yolo_scores):
+            cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(image, f"{label} {score:.2f}", (x1, max(0, y1 - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        self.render_buffer = image.reshape(-1).astype(np.float32)
+
     def register_dpg(self):
         
         ### register texture
@@ -486,6 +505,8 @@ class GaussianSplattingGUI:
             self.render_mode_pca = not self.render_mode_pca
         def render_mode_cluster_callback(sender):
             self.render_mode_cluster = not self.render_mode_cluster
+        def yolo_callback(sender):
+            self.yolo_enabled = dpg.get_value(sender)
         # control window
         with dpg.window(label="Control", tag="_control_window", width=300, height=550, pos=[self.window_width+10, 0]):
 
@@ -501,7 +522,11 @@ class GaussianSplattingGUI:
             dpg.add_checkbox(label="PCA", callback=render_mode_pca_callback, user_data="Some Data")
             dpg.add_checkbox(label="SIMILARITY", callback=render_mode_similarity_callback, user_data="Some Data")
             dpg.add_checkbox(label="3D CLUSTER", callback=render_mode_cluster_callback, user_data="Some Data")
-            
+
+            dpg.add_text("\nYOLO option: ", tag="yolo")
+            dpg.add_checkbox(label="YOLO detection", callback=yolo_callback, user_data="Some Data")
+            dpg.add_slider_float(label="YOLO conf", default_value=0.25,
+                                 min_value=0.0, max_value=1.0, tag="_YoloConf")
 
             dpg.add_text("\nSegment option: ", tag="seg")
             dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
@@ -980,7 +1005,19 @@ class GaussianSplattingGUI:
 
             render_num += 1
         self.render_buffer /= render_num
+
+        if self.yolo_enabled:
+            if self.yolo_detector is None:             # one-time load (~1-3s pause)
+                from yolo_inference import YoloDetector
+                self.yolo_detector = YoloDetector("yolo26l.pt", device="cuda")
+            frame = (self.render_buffer.reshape(self.height, self.width, 3) * 255.0
+                     ).clip(0, 255).astype(np.uint8)   # clean RGB viewpoint
+            self.yolo_labels, self.yolo_scores, self.yolo_boxes = \
+                self.yolo_detector.predict(frame, conf=dpg.get_value("_YoloConf"))
+
         self.apply_paintbrush_overlay()
+        if self.yolo_enabled:
+            self.draw_yolo_overlay()                   # boxes drawn on top
 
         dpg.set_value("_texture", self.render_buffer)
 

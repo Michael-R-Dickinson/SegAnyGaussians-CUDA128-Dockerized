@@ -89,3 +89,25 @@ All five steps verified end-to-end on RTX 5080 (sm_120):
 | Scale | `get_scale.py` | ✅ | 173 images |
 | CLIP features | `get_clip_features.py --downsample 8` | ✅ | 53 sec, 173 images |
 | Contrastive features | `train_contrastive_feature.py` 200 iters | ✅ | ~12 sec @ 20 it/s |
+
+## YOLO detection overlay (GUI) — experimental
+
+> ⚠️ **WIP / initial testing.** Lives on the `yolo-experiments` branch; not merged
+> to `Update-cuda`.
+
+Optional Ultralytics YOLO object-detection overlay for the SAGA GUI. When enabled,
+the rendered viewpoint frame is run through YOLO and the detected boxes/labels are
+drawn on top of the render.
+
+- **`yolo_inference.py`** — `YoloDetector` wraps Ultralytics `YOLO`; loads the
+  checkpoint once on `cuda`, flips RGB→BGR (Ultralytics expects BGR for numpy
+  inputs), and returns `(labels, scores, boxes)`.
+- **`saga_gui.py`** — adds a "YOLO detection" checkbox and a `YOLO conf` slider
+  (`_YoloConf`, default 0.25). The detector is lazy-loaded on first enable
+  (~1–3 s pause); boxes are drawn via `cv2` in `draw_yolo_overlay()`. The latest
+  results are cached on the GUI as `self.yolo_labels`, `self.yolo_scores`, and
+  `self.yolo_boxes` (refreshed each render while enabled).
+- **Dependency** — `pip install ultralytics` (added to the `Dockerfile`).
+- **Weights** — `yolo26l.pt` (~53 MB) is committed at the repo root and used by
+  default. Test artifacts `bus.jpg` and `runs/detect/predict/bus.jpg` are also
+  committed.

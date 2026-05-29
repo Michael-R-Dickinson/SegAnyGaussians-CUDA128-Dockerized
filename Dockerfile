@@ -70,5 +70,8 @@ RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" \
         submodules/diff-gaussian-rasterization-depth \
         submodules/simple-knn
 
+# YOLO inference for the GUI detection overlay (saga_gui.py)
+RUN pip install --no-cache-dir ultralytics
+
 # Copy the rest of the project
 COPY . .
