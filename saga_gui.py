@@ -263,6 +263,7 @@ class GaussianSplattingGUI:
         self.yolo_labels = []
         self.yolo_scores = []
         self.yolo_boxes = np.zeros((0, 4))
+        self.yolo_gate_brush = False       # reject brush prompts outside allowed YOLO boxes
 
         self.save_flag = False
     def __del__(self):
@@ -306,6 +307,27 @@ class GaussianSplattingGUI:
         self.paintbrush_mask.fill(False)
         self.paintbrush_painting = False
 
+    def brush_gate_active(self):
+        return self.yolo_gate_brush and self.yolo_enabled and self.paintbrush_mode
+
+    def blocked_labels(self):
+        raw = dpg.get_value("_YoloBlockLabels") or ""
+        return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+    def yolo_prompt_masks(self):
+        """(allowed, blocked) bool H×W masks from current boxes + labels + blocklist."""
+        allowed = np.zeros((self.height, self.width), dtype=bool)
+        blocked = np.zeros((self.height, self.width), dtype=bool)
+        blk = self.blocked_labels()
+        for (x1, y1, x2, y2), label in zip(
+                np.asarray(self.yolo_boxes).astype(int), self.yolo_labels):
+            x1, x2 = max(0, min(self.width, x1)),  max(0, min(self.width, x2))
+            y1, y2 = max(0, min(self.height, y1)), max(0, min(self.height, y2))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            (blocked if str(label).lower() in blk else allowed)[y1:y2, x1:x2] = True
+        return allowed, blocked
+
     def mouse_to_image_xy(self, xy):
         x, y = xy
         try:
@@ -342,8 +364,18 @@ class GaussianSplattingGUI:
             self.commit_brush_prompts = False
             return
 
+        pos_mask = self.paintbrush_mask
+        if self.yolo_gate_brush and self.yolo_enabled:
+            allowed, _ = self.yolo_prompt_masks()
+            pos_mask = self.paintbrush_mask & allowed
+            if not pos_mask.any():
+                print("[YOLO gate] no painted pixels inside an allowed YOLO box — nothing committed")
+                self.commit_brush_prompts = False
+                self.clear_paintbrush()
+                return
+
         spacing = max(1, int(dpg.get_value("_BrushSampleSpacing")))
-        painted_ys, painted_xs = np.where(self.paintbrush_mask)
+        painted_ys, painted_xs = np.where(pos_mask)
         y0, y1 = painted_ys.min(), painted_ys.max()
         x0, x1 = painted_xs.min(), painted_xs.max()
         grid_ys = np.arange(y0, y1 + 1, spacing)
@@ -351,7 +383,7 @@ class GaussianSplattingGUI:
         grid_xs, grid_ys = np.meshgrid(grid_xs, grid_ys)
         grid_xs = grid_xs.reshape(-1)
         grid_ys = grid_ys.reshape(-1)
-        keep = self.paintbrush_mask[grid_ys, grid_xs]
+        keep = pos_mask[grid_ys, grid_xs]
         ys = grid_ys[keep]
         xs = grid_xs[keep]
         if len(xs) == 0:
@@ -412,7 +444,19 @@ class GaussianSplattingGUI:
 
         image = self.render_buffer.reshape(self.height, self.width, 3)
         orange = np.array([1.0, 0.45, 0.0], dtype=np.float32)
-        image[self.paintbrush_mask] = image[self.paintbrush_mask] * 0.45 + orange * 0.55
+        purple = np.array([0.6, 0.1, 0.9], dtype=np.float32)   # outside all boxes
+        red    = np.array([0.9, 0.1, 0.1], dtype=np.float32)   # inside a blocked box
+        if self.brush_gate_active():
+            allowed, blocked = self.yolo_prompt_masks()
+            keep    = self.paintbrush_mask & allowed
+            invalid = self.paintbrush_mask & ~allowed
+            blk_px  = invalid & blocked     # blocked box, not in any allowed box
+            out_px  = invalid & ~blocked    # outside all boxes
+            image[keep]   = image[keep]   * 0.45 + orange * 0.55
+            image[blk_px] = image[blk_px] * 0.45 + red    * 0.55
+            image[out_px] = image[out_px] * 0.45 + purple * 0.55
+        else:
+            image[self.paintbrush_mask] = image[self.paintbrush_mask] * 0.45 + orange * 0.55
 
         if self.show_zone_overlays:
             stroke_w = max(1, int(dpg.get_value("_StrokeWidth")))
@@ -434,9 +478,12 @@ class GaussianSplattingGUI:
             return
         image = np.ascontiguousarray(
             self.render_buffer.reshape(self.height, self.width, 3))
-        color = (0.0, 1.0, 0.0)  # green, RGB floats (buffer is [0,1])
+        green = (0.0, 1.0, 0.0)  # allowed, RGB floats (buffer is [0,1])
+        red   = (1.0, 0.0, 0.0)  # blocked-label box
+        blk = self.blocked_labels() if (self.yolo_gate_brush and self.yolo_enabled) else set()
         for (x1, y1, x2, y2), label, score in zip(
                 self.yolo_boxes.astype(int), self.yolo_labels, self.yolo_scores):
+            color = red if str(label).lower() in blk else green
             cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
             cv2.putText(image, f"{label} {score:.2f}", (x1, max(0, y1 - 5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
@@ -507,6 +554,8 @@ class GaussianSplattingGUI:
             self.render_mode_cluster = not self.render_mode_cluster
         def yolo_callback(sender):
             self.yolo_enabled = dpg.get_value(sender)
+        def yolo_gate_brush_callback(sender):
+            self.yolo_gate_brush = dpg.get_value(sender)
         # control window
         with dpg.window(label="Control", tag="_control_window", width=300, height=550, pos=[self.window_width+10, 0]):
 
@@ -527,6 +576,10 @@ class GaussianSplattingGUI:
             dpg.add_checkbox(label="YOLO detection", callback=yolo_callback, user_data="Some Data")
             dpg.add_slider_float(label="YOLO conf", default_value=0.25,
                                  min_value=0.0, max_value=1.0, tag="_YoloConf")
+            dpg.add_checkbox(label="reject brush prompts outside boxes",
+                             callback=yolo_gate_brush_callback, user_data="Some Data")
+            dpg.add_input_text(label="block labels (comma-sep)",
+                               default_value="", tag="_YoloBlockLabels")
 
             dpg.add_text("\nSegment option: ", tag="seg")
             dpg.add_checkbox(label="clickmode", callback=clickmode_callback, user_data="Some Data")
@@ -661,7 +714,7 @@ class GaussianSplattingGUI:
                 return
             if self.paintbrush_mode:
                 return
-            if dpg.is_item_active("save_name"):
+            if dpg.is_item_active("save_name") or dpg.is_item_active("_YoloBlockLabels"):
                 return
             step = 50.0
             if key == _IMGUI_W:
@@ -693,7 +746,7 @@ class GaussianSplattingGUI:
                     return
                 if self.paintbrush_mode:
                     return
-                if dpg.is_item_active("save_name"):
+                if dpg.is_item_active("save_name") or dpg.is_item_active("_YoloBlockLabels"):
                     return
                 forward = self.camera.rot.as_matrix()[:3, 2]
                 angle = np.radians(-30) if key == _IMGUI_Q else np.radians(30)

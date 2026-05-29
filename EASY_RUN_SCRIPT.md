@@ -27,3 +27,31 @@ Run the GUI!
 python saga_gui.py --model_path output/flowers_10k_iterations --scene_iteration 10000 --feature_iteration 10000
 ```
 
+## Waldo Kitchen
+
+**Note:** the training steps only need to be performed once, run gui directly after training once.
+
+
+**Note2:** training typically takes ~60-90 minutes.
+
+```
+ python train_scene.py -s data/360_extra_scenes/waldo_kitchen_colmap --iterations 10000 --model_path output/waldo_10k_iterations
+```
+
+```
+python extract_segment_everything_masks.py --image_root data/360_extra_scenes/waldo_kitchen_colmap --sam_checkpoint_path sam_vit_h_4b8939.pth
+```
+
+```
+python get_scale.py --image_root data/360_extra_scenes/waldo_kitchen_colmap --model_path output/waldo_10k_iterations
+```
+
+```
+python train_contrastive_feature.py -m output/waldo_10k_iterations --iterations 10000 --num_sampled_rays 1000
+```
+
+To run the GUI,
+
+```
+python saga_gui.py --model_path output/waldo_10k_iterations --scene_iteration 10000 --feature_iteration 10000
+```
