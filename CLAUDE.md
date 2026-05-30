@@ -200,3 +200,40 @@ the negative/penalty-zone samples are untouched).
 - **Empty case** — if no painted pixel is inside an allowed box (nothing allowed /
   YOLO found nothing), nothing is committed and the stroke is cleared
   (`[YOLO gate]` message printed).
+
+### YOLO-guided auto ScoreThres
+The **`auto ScoreThres (YOLO)`** button (under the `ScoreThres` slider) picks a
+`ScoreThres` for the *current view* using YOLO boxes as weak supervision, so you don't
+have to hand-tune the slider. **Non-destructive** — it only moves the slider; you still
+click `segment3d` to carve. Run it *before* `segment3d` (which prunes the cloud); after a
+prune it still works but only over the already-pruned subset. Needs a click/brush prompt
+active (else `[auto ScoreThres] add a click or brush prompt first`) and YOLO enabled with
+≥1 visible box (else a hint is printed and the slider is left unchanged). It reads
+`self.yolo_boxes` from the previous frame, which is fine since the camera is static while
+clicking.
+
+Per Gaussian (`auto_tune_scorethres`, `saga_gui.py`):
+- **Score** — reuses the same similarity metric as `segment3d` via the shared
+  `compute_point_scores()` helper (refactored out of the `segment3d` block).
+- **Project** — Gaussian centers → current-view pixels using
+  `view_camera.world_view_transform` / `full_proj_transform` and the rasterizer's
+  `ndc2Pix`, so projected pixels line up with the YOLO boxes. Only Gaussians that are
+  **in front** (`depth > 0.2`) **and** inside the image are judged.
+- **+reward** if the pixel lands in an *allowed* box (reuses `yolo_prompt_masks()`, so the
+  `block labels` blocklist is respected — blocked boxes count as "outside"), weighted by
+  `exp(-angle²/2σ²)` where `angle` is the offset from the camera's optical axis (dead-center
+  = full reward). The falloff width `σ` grows with the **`Scale`** slider
+  (`AUTO_SIGMA_MIN`=0.12 → `AUTO_SIGMA_MAX`=0.60 rad; constants on `GaussianSplattingGUI`).
+- **−penalty** (the **`auto penalty weight`** slider, `_AutoPenalty`, default 1.0) if the
+  Gaussian is in view but outside every allowed box. Off-screen Gaussians get weight `0`.
+- **Threshold** — `ScoreThres = argmax_t Σ_{score>t} weight`, found in one sorted-`cumsum`
+  pass; set to the midpoint between the kept and first-dropped score. Penalties only count
+  once a Gaussian is selected, so the low-scoring background is ignored and the penalty
+  bites only on real false positives (robust to the in-box/outside count imbalance). If the
+  best sum ≤ 0 the threshold is pushed above the max score (select ~nothing).
+- **Output** — `dpg.set_value('_ScoreThres', t)` (so the 2D preview refreshes live) plus a
+  `[auto ScoreThres] = <t> (reward J=…, in-box=…, kept k/N)` console line.
+
+> **Tuning** — raise `auto penalty weight` for a tighter cut (higher threshold, fewer
+> outside-box Gaussians), lower it for a looser one. The angular falloff `AUTO_SIGMA_*`
+> are plain constants; promote them to a slider if per-scene control is needed.

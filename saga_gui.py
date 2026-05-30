@@ -178,6 +178,10 @@ class OrbitCamera:
 
 
 class GaussianSplattingGUI:
+    # auto ScoreThres: angular-falloff width (radians) as a function of the Scale slider [0,1].
+    AUTO_SIGMA_MIN = 0.12   # Scale=0 -> sharp falloff  (~7 deg)
+    AUTO_SIGMA_MAX = 0.60   # Scale=1 -> gentle falloff (~34 deg)
+
     def __init__(self, opt, gaussian_model:GaussianModel, feature_gaussian_model:FeatureGaussianModel, scale_gate: torch.nn.modules.container.Sequential) -> None:
         self.opt = opt
 
@@ -264,6 +268,8 @@ class GaussianSplattingGUI:
         self.yolo_scores = []
         self.yolo_boxes = np.zeros((0, 4))
         self.yolo_gate_brush = False       # reject brush prompts outside allowed YOLO boxes
+
+        self.auto_scorethres_flag = False  # request: auto-pick ScoreThres from YOLO boxes
 
         self.save_flag = False
     def __del__(self):
@@ -528,6 +534,8 @@ class GaussianSplattingGUI:
             self.roll_back = True
         def callback_segment3d():
             self.segment3d_flag = True
+        def callback_auto_scorethres():
+            self.auto_scorethres_flag = True
         def callback_commit_brush_prompts():
             self.commit_brush_prompts = True
         def callback_save():
@@ -564,6 +572,9 @@ class GaussianSplattingGUI:
                                  min_value=0.0, max_value=1.0, tag="_Scale")
             dpg.add_slider_float(label="ScoreThres", default_value=0.0,
                                  min_value=0.0, max_value=1.0, tag="_ScoreThres")
+            dpg.add_button(label="auto ScoreThres (YOLO)", callback=callback_auto_scorethres, user_data="Some Data")
+            dpg.add_slider_float(label="auto penalty weight", default_value=1.0,
+                                 min_value=0.0, max_value=5.0, tag="_AutoPenalty")
             # dpg.add_button(label="render_option", tag="_button_depth",
                             # callback=callback_depth)
             dpg.add_text("\nRender option: ", tag="render")
@@ -866,6 +877,88 @@ class GaussianSplattingGUI:
         print("project mat initialized !")
 
 
+    def compute_point_scores(self, gated_chosen, gated_neg, neg_weight):
+        """Per-Gaussian similarity score (N,) in ~[0,1] for the active prompts.
+
+        Shared by segment3d and the auto-ScoreThres button so both use the same metric.
+        """
+        feat_pts = self.engine['feature'].get_point_features.squeeze()
+        feat_pts = torch.nn.functional.normalize(feat_pts * self.gates.unsqueeze(0), dim=-1, p=2)
+        combined = (((feat_pts @ gated_chosen) + 1.0) / 2).mean(dim=1)  # (N,)
+        if gated_neg is not None:
+            combined = combined - neg_weight * (((feat_pts @ gated_neg) + 1.0) / 2).mean(dim=1)
+        return combined
+
+    @torch.no_grad()
+    def auto_tune_scorethres(self, view_camera, gated_chosen, gated_neg, neg_weight):
+        """Pick ScoreThres from the current view's YOLO boxes and update the slider.
+
+        Rewards Gaussians that project inside an allowed YOLO box (weighted by how close they
+        sit to the optical axis, with a falloff width set by the Scale slider) and penalizes
+        selected Gaussians that project outside every box, then sets the threshold that
+        maximizes total reward. Non-destructive: only moves the slider.
+        """
+        if (not self.yolo_enabled) or len(self.yolo_boxes) == 0:
+            print("[auto ScoreThres] enable YOLO and make sure at least one box is visible first")
+            return
+
+        scores = self.compute_point_scores(gated_chosen, gated_neg, neg_weight)  # (N,)
+        xyz = self.engine['scene'].get_xyz                                       # (N, 3)
+        N = xyz.shape[0]
+        device = xyz.device
+
+        # Project centers into the current view (row-vector convention; matches rasterizer).
+        ones = torch.ones((N, 1), device=device)
+        phom = torch.cat([xyz, ones], dim=1)
+        p_view = phom @ view_camera.world_view_transform     # camera space (+z = in front)
+        clip = phom @ view_camera.full_proj_transform        # clip space
+        depth = p_view[:, 2]
+        w = clip[:, 3].clamp(min=1e-6)
+        px = ((clip[:, 0] / w + 1.0) * self.width - 1.0) * 0.5
+        py = ((clip[:, 1] / w + 1.0) * self.height - 1.0) * 0.5
+        pxi = px.round().long()
+        pyi = py.round().long()
+        in_view = (depth > 0.2) & (pxi >= 0) & (pxi < self.width) & (pyi >= 0) & (pyi < self.height)
+
+        # Allowed-box membership, reusing the brush-gate mask.
+        allowed = torch.from_numpy(self.yolo_prompt_masks()[0]).to(device)       # (H, W) bool
+        inside = torch.zeros(N, dtype=torch.bool, device=device)
+        idx = in_view.nonzero(as_tuple=True)[0]
+        inside[idx] = allowed[pyi[idx].clamp(0, self.height - 1), pxi[idx].clamp(0, self.width - 1)]
+
+        # Angle from the optical axis; falloff width grows with the Scale slider.
+        cos_axis = (depth / p_view[:, :3].norm(dim=1).clamp(min=1e-6)).clamp(-1, 1)
+        angle = torch.arccos(cos_axis)
+        scale = float(dpg.get_value('_Scale'))
+        sigma = self.AUTO_SIGMA_MIN + (self.AUTO_SIGMA_MAX - self.AUTO_SIGMA_MIN) * scale
+        ang_w = torch.exp(-(angle ** 2) / (2.0 * sigma ** 2))                    # (0, 1]
+
+        # Per-Gaussian reward (inside an allowed box) / penalty (in view but outside any box).
+        penalty = float(dpg.get_value('_AutoPenalty'))
+        w_vec = torch.zeros(N, device=device)
+        pos = in_view & inside
+        neg = in_view & ~inside
+        w_vec[pos] = ang_w[pos]
+        w_vec[neg] = -penalty
+
+        # Best threshold = argmax over t of  sum_{score > t} weight  (sorted cumulative sum).
+        order = torch.argsort(scores, descending=True)
+        prefix = torch.cumsum(w_vec[order], dim=0)
+        best_val, best_k = torch.max(prefix, dim=0)
+        s_sorted = scores[order]
+        if best_val.item() <= 0:
+            t_star = float(s_sorted[0].item()) + 1e-3       # nothing worth keeping -> select ~none
+        else:
+            k = int(best_k.item())
+            lo = s_sorted[k + 1].item() if k + 1 < N else 0.0
+            t_star = 0.5 * (s_sorted[k].item() + lo)
+        t_star = float(min(max(t_star, 0.0), 1.0))
+
+        dpg.set_value('_ScoreThres', t_star)
+        kept = int((scores > t_star).sum().item())
+        print(f"[auto ScoreThres] = {t_star:.4f}  (reward J={best_val.item():.2f}, "
+              f"in-box={int(pos.sum().item())}, kept {kept}/{N})")
+
     @torch.no_grad()
     def fetch_data(self, view_camera):
         
@@ -996,21 +1089,7 @@ class GaussianSplattingGUI:
                 self.engine._objects_dc     # (N, 1, 16)
                 """
                 self.segment3d_flag = False
-                feat_pts = self.engine['feature'].get_point_features.squeeze()
-                scale_gated_feat_pts = feat_pts * self.gates.unsqueeze(0)
-                scale_gated_feat_pts = torch.nn.functional.normalize(scale_gated_feat_pts, dim = -1, p = 2)
-
-                score_pts = scale_gated_feat_pts @ gated_chosen
-                score_pts = (score_pts + 1.0) / 2
-                mean_pos_pts = score_pts.mean(dim=1)  # (N,)
-
-                if gated_neg is not None:
-                    neg_pts = scale_gated_feat_pts @ gated_neg
-                    neg_pts = (neg_pts + 1.0) / 2
-                    mean_neg_pts = neg_pts.mean(dim=1)  # (N,)
-                    combined_pts = mean_pos_pts - neg_weight * mean_neg_pts
-                else:
-                    combined_pts = mean_pos_pts
+                combined_pts = self.compute_point_scores(gated_chosen, gated_neg, neg_weight)
 
                 self.score_pts_binary = combined_pts > dpg.get_value('_ScoreThres')
 
@@ -1022,6 +1101,14 @@ class GaussianSplattingGUI:
                 #     pass
                 self.engine['scene'].segment(self.score_pts_binary)
                 self.engine['feature'].segment(self.score_pts_binary)
+
+            if self.auto_scorethres_flag:
+                self.auto_scorethres_flag = False
+                self.auto_tune_scorethres(view_camera, gated_chosen, gated_neg, neg_weight)
+
+        if self.auto_scorethres_flag and self.prompt_num == 0:
+            self.auto_scorethres_flag = False
+            print("[auto ScoreThres] add a click or brush prompt first")
 
         if self.save_flag:
             print("Saving ...")
